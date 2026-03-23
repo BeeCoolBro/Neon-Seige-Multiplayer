@@ -16,7 +16,7 @@
 }
 .mp-card{
   background:var(--panel,#0a1020);border:1px solid rgba(0,229,255,.15);
-  border-radius:14px;padding:40px 52px;width:480px;text-align:center;
+  border-radius:14px;padding:28px 32px;width:520px;text-align:center;
   box-shadow:0 8px 60px rgba(0,0,0,.8);
 }
 .mp-logo{
@@ -3793,6 +3793,7 @@ function mpInit() {
       mpSetStatus2('All players connected! Starting...', 'ok');
 
       setTimeout(() => {
+        console.log('[game-ready timeout] gs:', gs, 'mpPlayerNum:', mpPlayerNum);
         if (gs === 'play' && mpPlayerNum === 1) {
           // Mid-game reconnect — send current state
           mpStartGame();
@@ -3919,14 +3920,21 @@ function mpBuildDots(filled) { mpBuildPlayerList(filled); }
 
 // ── VOTING ────────────────────────────────────────────────
 function showStepVote() {
-  document.getElementById('mpStep1').style.display = 'none';
-  document.getElementById('mpStep2').style.display = 'none';
-  document.getElementById('mpStepSearch').style.display = 'none';
-  document.getElementById('mpStepVote').style.display = '';
-  mpVotes = {};
-  mpMyMapVote = 0;
-  mpMyDiffVote = 0;
-  mpRenderVoteScreen();
+  console.log('[showStepVote] called, gs:', gs, 'mpMaxPlayers:', mpMaxPlayers);
+  try {
+    document.getElementById('mpLobbyOv').style.display = 'flex';
+    document.getElementById('mpStep1').style.display = 'none';
+    document.getElementById('mpStep2').style.display = 'none';
+    document.getElementById('mpStepSearch').style.display = 'none';
+    document.getElementById('mpStepVote').style.display = '';
+    mpVotes = {};
+    mpMyMapVote = 0;
+    mpMyDiffVote = 0;
+    mpRenderVoteScreen();
+    console.log('[showStepVote] done OK');
+  } catch(e) {
+    console.error('[showStepVote] ERROR:', e);
+  }
 }
 
 function mpRenderVoteScreen() {
@@ -4036,12 +4044,14 @@ function showStep1() {
   document.getElementById('mpStep1').style.display = '';
   document.getElementById('mpStep2').style.display = 'none';
   document.getElementById('mpStepSearch').style.display = 'none';
+  document.getElementById('mpStepVote').style.display = 'none';
 }
 
 function showStepSearch() {
   document.getElementById('mpStep1').style.display = 'none';
   document.getElementById('mpStep2').style.display = 'none';
   document.getElementById('mpStepSearch').style.display = '';
+  document.getElementById('mpStepVote').style.display = 'none';
 }
 
 // ── QUICK MATCH ───────────────────────────────────────────
@@ -4086,6 +4096,7 @@ function mpCancelMatch() {
 function showStep2(filledCount) {
   document.getElementById('mpStep1').style.display = 'none';
   document.getElementById('mpStepSearch').style.display = 'none';
+  document.getElementById('mpStepVote').style.display = 'none';
   document.getElementById('mpStep2').style.display = '';
   document.getElementById('mpRoomDisplay').textContent = mpRoom;
   mpBuildDots(filledCount || 1);
