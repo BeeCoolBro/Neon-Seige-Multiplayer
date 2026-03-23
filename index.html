@@ -1384,9 +1384,7 @@ function beginGame(){
   const wrap = document.getElementById('gameWrap');
   void wrap.offsetWidth;
   resize();
-  // Call resize again after one frame to catch any remaining layout shifts,
-  // then immediately kick off the game loop (NOT inside rAF so it starts right away)
-  setTimeout(() => { resize(); loop(); }, 50);
+  loop();
 }
 
 // ── LOOP ─────────────────────────────────────────────────
@@ -3554,9 +3552,10 @@ buildAchPanel();
 // ══════════════════════════════════════════════════════════
 let socket = null;
 let mpRoom = null;
-let mpPlayerNum = 1; // 1 = host, 2 = guest
+let mpPlayerNum = 1;
 let mpConnected = false;
 let mpSolo = false;
+let mpSyncTick = 0;
 
 // Try to connect to the Socket.io server
 function mpInit() {
