@@ -1349,6 +1349,7 @@ function goMenu(){
 
 // ── INIT ─────────────────────────────────────────────────
 function beginGame(){
+  console.log('[beginGame] called — map:', activeMap, 'diff:', activeDiff, 'mpPlayerNum:', mpPlayerNum, 'mpSolo:', mpSolo, 'mpRoom:', mpRoom);
   const m=MAPS[activeMap], diff=getDiff();
   money=Math.max(50, m.startMoney+(shopBought.bonus_money?100:0)+diff.startMoneyBonus);
   lives=Math.max(5, m.lives+(shopBought.extra_lives?25:0)+diff.livesBonus);
@@ -3583,22 +3584,19 @@ function mpInit() {
 
     // Both players are in — start the game
     socket.on('game-ready', () => {
+      console.log('[game-ready] fired — mpPlayerNum:', mpPlayerNum, 'gs:', gs);
       document.getElementById('mpDot2').classList.add('on');
       document.getElementById('mpDot2').classList.remove('off');
       mpSetStatus2('Both players connected! Starting...', 'ok');
+
       if (mpPlayerNum === 1) {
         setTimeout(() => {
-          // Close the lobby for P1
-          mpStartGame();
-          if (gs !== 'play') {
-            // Fresh game — P1 starts, which broadcasts begin-game to P2
-            beginGame();
-          } else {
-            // Already in game — just send current state to reconnecting P2
+          console.log('[game-ready P1] calling mpStartGame + beginGame, gs=', gs);
+          mpStartGame(); // hide lobby
+          if (gs === 'play') {
+            // Mid-game reconnect — send current state to P2
             mpSendAction('sync-settings', {
-              map: activeMap,
-              diff: activeDiff,
-              inProgress: true,
+              map: activeMap, diff: activeDiff, inProgress: true,
               wave, money, lives,
               towers: towers.map(t => ({
                 x: t.x, y: t.y, type: t.type,
@@ -3607,10 +3605,13 @@ function mpInit() {
                 totalSpent: t.totalSpent,
               })),
             });
+          } else {
+            // Fresh game — start for P1, which auto-sends begin-game to P2
+            beginGame();
           }
-        }, 500);
+        }, 600);
       }
-      // P2: lobby closes when sync-settings or begin-game arrives
+      // P2 waits for begin-game or sync-settings message
     });
 
     // Receive an action from the other player and apply it
@@ -3710,11 +3711,9 @@ function mpApplyRemoteAction(data) {
     selectDiff(payload.diff);
 
     if (payload.inProgress && payload.towers) {
-      // Reconnecting mid-game — restore full game state then start
       wave = payload.wave || 0;
       money = payload.money || 200;
       lives = payload.lives || 100;
-      // Restore towers
       towers = payload.towers.map(td => {
         const def = TDEFS[td.type];
         return {
@@ -3729,18 +3728,19 @@ function mpApplyRemoteAction(data) {
           vehicleCooldown: 0, vehicle: null,
         };
       });
-      // Close overlays and jump straight into the game
       ['startOv','deadOv','winOv','shopOv','saveOv','pauseOv'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.style.display = 'none';
+        const el = document.getElementById(id); if (el) el.style.display = 'none';
       });
       gs = 'play'; paused = false; speed = 1;
-      resize();
-      buildTowerList(); buildEnemyLegend(); buildShopUI();
-      updateHUD(); updateSel(); updateAbilityBar();
+      // Hide lobby first, then resize so canvas has correct dimensions
       mpStartGame();
-      loop();
-      addChatSys('Reconnected to game in progress!');
+      requestAnimationFrame(() => {
+        resize();
+        buildTowerList(); buildEnemyLegend(); buildShopUI();
+        updateHUD(); updateSel(); updateAbilityBar();
+        loop();
+        addChatSys('Reconnected to game in progress!');
+      });
     } else {
       // Fresh start — just close the lobby, P2 waits for P1 to hit Initialize
       mpStartGame();
@@ -3822,10 +3822,11 @@ function mpApplyRemoteAction(data) {
   }
 
   else if (type === 'begin-game') {
-    // P1 pressed Initialize — P2 starts the game with the same settings
     activeMap = payload.map;
     activeDiff = payload.diff;
-    beginGame();
+    // Hide lobby first so gameWrap has real dimensions, then start
+    mpStartGame();
+    requestAnimationFrame(() => beginGame());
   }
 
   else if (type === 'launch-wave') {
