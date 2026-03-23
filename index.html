@@ -66,6 +66,72 @@
 .mp-dot{width:12px;height:12px;border-radius:50%;border:2px solid rgba(255,255,255,.15);transition:all .3s;}
 .mp-dot.on{background:#76ff03;border-color:#76ff03;box-shadow:0 0 10px #76ff03;}
 .mp-dot.off{background:transparent;}
+
+/* ── CHAT ── */
+#chatBox{
+  position:fixed;bottom:16px;left:16px;z-index:500;
+  width:280px;display:none;flex-direction:column;gap:0;
+  font-family:'Inter',sans-serif;
+}
+#chatBox.open{display:flex;}
+#chatLog{
+  background:rgba(4,7,14,.92);border:1px solid rgba(0,229,255,.12);
+  border-bottom:none;border-radius:8px 8px 0 0;
+  height:180px;overflow-y:auto;padding:8px 10px;
+  display:flex;flex-direction:column;gap:4px;
+}
+#chatLog::-webkit-scrollbar{width:2px;}
+#chatLog::-webkit-scrollbar-thumb{background:rgba(0,229,255,.2);border-radius:2px;}
+.chat-msg{font-size:11px;line-height:1.4;word-break:break-word;}
+.chat-msg.me{color:#cde4ff;}.chat-msg.me .chat-who{color:#00e5ff;font-weight:700;}
+.chat-msg.them{color:#cde4ff;}.chat-msg.them .chat-who{color:#76ff03;font-weight:700;}
+.chat-msg.sys{color:#5a7a98;font-style:italic;}
+#chatInputRow{display:flex;border:1px solid rgba(0,229,255,.12);border-radius:0 0 8px 8px;overflow:hidden;}
+#chatInput{
+  flex:1;background:rgba(4,7,14,.96);border:none;outline:none;
+  padding:7px 10px;color:#cde4ff;font-family:'Inter',sans-serif;font-size:11px;
+}
+#chatInput::placeholder{color:#2e4a68;}
+#chatSendBtn{
+  padding:0 12px;background:rgba(0,229,255,.07);border:none;border-left:1px solid rgba(0,229,255,.12);
+  color:#00e5ff;cursor:pointer;font-size:13px;transition:background .1s;
+}
+#chatSendBtn:hover{background:rgba(0,229,255,.14);}
+#chatToggleBtn{
+  position:fixed;bottom:16px;left:16px;z-index:501;
+  width:40px;height:40px;border-radius:50%;
+  background:rgba(4,7,14,.95);border:1px solid rgba(0,229,255,.25);
+  color:#00e5ff;font-size:16px;cursor:pointer;
+  display:none;align-items:center;justify-content:center;
+  transition:all .15s;box-shadow:0 2px 12px rgba(0,0,0,.5);
+}
+#chatToggleBtn:hover{background:rgba(0,229,255,.1);border-color:rgba(0,229,255,.5);}
+#chatToggleBtn.has-unread{border-color:#f50057;color:#f50057;animation:mpPulse .8s ease-in-out infinite;}
+#chatBadge{
+  position:absolute;top:-4px;right:-4px;
+  background:#f50057;color:#fff;font-size:8px;font-weight:700;
+  width:14px;height:14px;border-radius:50%;
+  display:none;align-items:center;justify-content:center;
+  font-family:'Orbitron',monospace;
+}
+
+/* ── PARTNER CURSOR ── */
+#partnerCursor{
+  position:fixed;pointer-events:none;z-index:9998;
+  transform:translate(-4px,-4px);
+  display:none;
+  transition:left .05s linear, top .05s linear;
+}
+.partner-dot{
+  width:12px;height:12px;border-radius:50%;
+  background:#76ff03;border:2px solid #fff;
+  box-shadow:0 0 10px #76ff03, 0 0 20px rgba(118,255,3,.4);
+}
+.partner-label{
+  font-family:'Orbitron',monospace;font-size:8px;font-weight:700;
+  color:#76ff03;margin-top:2px;white-space:nowrap;
+  text-shadow:0 0 8px #76ff03;
+}
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@400;500;600;700&display=swap');
 :root{
   --c:#00e5ff;--p:#f50057;--g:#ffea00;--gn:#76ff03;
@@ -498,6 +564,26 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
     <button class="hbtn dim" onclick="togglePause()">⏸</button>
     <button class="hbtn dim" id="muteBtn" onclick="toggleMute()">🔊</button>
   </div>
+</div>
+
+<!-- ══ CHAT ══ -->
+<button id="chatToggleBtn" onclick="toggleChat()">
+  💬
+  <div id="chatBadge"></div>
+</button>
+<div id="chatBox">
+  <div id="chatLog"></div>
+  <div id="chatInputRow">
+    <input id="chatInput" maxlength="120" placeholder="Say something..." autocomplete="off"
+      onkeydown="if(event.key==='Enter')sendChat()">
+    <button id="chatSendBtn" onclick="sendChat()">➤</button>
+  </div>
+</div>
+
+<!-- ══ PARTNER CURSOR ══ -->
+<div id="partnerCursor">
+  <div class="partner-dot"></div>
+  <div class="partner-label" id="partnerLabel">P2</div>
 </div>
 
 <!-- ══ MAIN LAYOUT ══ -->
@@ -1493,6 +1579,8 @@ function tick(){
 
 function killEnemy(e,idx){
   money+=e.reward;
+  // Co-op: partner gets the same reward so both players share the economy
+  if (!mpSolo) mpSendAction('earn-money', { amount: e.reward });
   if(!sandboxModeEnabled) score+=Math.round(e.reward*10*getDiff().scoreMultiplier);
   kills++; killStreak++; streakTimer=180;
   sessionStats.creditsEarned=(sessionStats.creditsEarned||0)+e.reward;
@@ -3470,7 +3558,14 @@ function mpInit() {
       document.getElementById('mpDot2').classList.add('on');
       document.getElementById('mpDot2').classList.remove('off');
       mpSetStatus2('Both players connected! Starting...', 'ok');
-      setTimeout(mpStartGame, 1000);
+      // Player 1 sends map/difficulty to Player 2 first, then both start
+      if (mpPlayerNum === 1) {
+        setTimeout(() => {
+          mpSendAction('sync-settings', { map: activeMap, diff: activeDiff });
+          setTimeout(mpStartGame, 800);
+        }, 300);
+      }
+      // Player 2 waits for sync-settings before starting (see mpApplyRemoteAction)
     });
 
     // Receive an action from the other player and apply it
@@ -3481,6 +3576,8 @@ function mpInit() {
     // Partner disconnected mid-game
     socket.on('partner-left', () => {
       showToast('⚠️', 'PARTNER LEFT', 'Your co-op partner disconnected.', '#f50057');
+      addChatSys('Partner disconnected.');
+      document.getElementById('partnerCursor').style.display = 'none';
     });
 
   } catch(e) { mpPlaySolo(); }
@@ -3507,6 +3604,10 @@ function mpPlaySolo() {
 
 function mpStartGame() {
   document.getElementById('mpLobbyOv').style.display = 'none';
+  if (!mpSolo) {
+    mpShowChat();
+    addChatSys('Co-op session started! Say hi to your partner 👋');
+  }
 }
 
 function showStep1() {
@@ -3544,10 +3645,21 @@ function mpApplyRemoteAction(data) {
   if (!data) return;
   const { type, payload } = data;
 
+  // Player 2 receives host's map + difficulty and starts the game
+  if (type === 'sync-settings') {
+    selectMap(payload.map);
+    selectDiff(payload.diff);
+    mpSetStatus2('Map synced! Starting...', 'ok');
+    setTimeout(mpStartGame, 500);
+    return;
+  }
+
   if (type === 'place-tower') {
-    // Partner placed a tower — place it on our map silently
+    // Partner placed a tower — place it on our map and deduct cost from our wallet
     const def = TDEFS[payload.ttype];
     if (!def) return;
+    const cost = payload.cost || towerCost(payload.ttype);
+    money -= cost; // deduct from shared wallet
     const t = {
       x: payload.x, y: payload.y,
       type: payload.ttype,
@@ -3555,17 +3667,38 @@ function mpApplyRemoteAction(data) {
       dmg: def.dmg, rate: def.rate, range: def.range,
       splash: def.splash, chain: def.chain,
       upgDmg: 0, upgSpd: 0, upgRng: 0, upgSpec: 0,
-      cd: 0, kills: 0, totalSpent: towerCost(payload.ttype),
-      targetMode: 'first',
+      cooldown: 0, angle: -Math.PI/2, kills: 0, shootFlash: 0,
+      totalSpent: cost, special: def.special,
+      laserTarget: null, spinAngle: 0, targetMode: 'first',
+      vehicleCooldown: 0, vehicle: null,
       owner: 'partner',
     };
     towers.push(t);
+    bump('pillCash');
+    updateHUD(); updateAfford();
     showToast('🤝', 'CO-OP', `Partner placed ${def.name}`, def.color);
   }
 
   else if (type === 'sell-tower') {
     const idx = towers.findIndex(t => Math.round(t.x) === payload.x && Math.round(t.y) === payload.y);
     if (idx !== -1) towers.splice(idx, 1);
+    if (payload.refund) { money += payload.refund; bump('pillCash'); updateHUD(); updateAfford(); }
+  }
+
+  else if (type === 'spend-money') {
+    // Partner spent money (upgrade or shop) — deduct from our wallet too
+    money -= payload.amount;
+    bump('pillCash');
+    updateHUD(); updateAfford();
+  }
+
+  else if (type === 'chat') {
+    const name = mpPlayerNum === 1 ? 'P2' : 'P1';
+    addChatMsg('them', name, payload.text);
+  }
+
+  else if (type === 'cursor') {
+    updatePartnerCursor(payload.x, payload.y);
   }
 
   else if (type === 'launch-wave') {
@@ -3578,18 +3711,21 @@ function mpApplyRemoteAction(data) {
   }
 
   else if (type === 'earn-money') {
-    // Partner shares half their kill reward with us
+    // Partner killed an enemy — we get the same reward (shared economy)
     money += payload.amount;
+    bump('pillCash');
     updateHUD();
   }
 }
 
+
 // ── Hook into existing game functions ─────────────────────
-// Wrap placeTower to broadcast placement
+// Wrap placeTower to broadcast placement AND deduct cost from partner's wallet
 const _origPlaceTower = placeTower;
 placeTower = function(x, y, type) {
+  const cost = towerCost(type);
   _origPlaceTower(x, y, type);
-  mpSendAction('place-tower', { x: Math.round(x), y: Math.round(y), ttype: type });
+  mpSendAction('place-tower', { x: Math.round(x), y: Math.round(y), ttype: type, cost });
 };
 
 // Wrap launchWave to sync wave starts
@@ -3606,8 +3742,117 @@ useAbility = function(idx) {
   mpSendAction('use-ability', { idx });
 };
 
+// Wrap doUpg to sync upgrade costs
+const _origDoUpg = doUpg;
+doUpg = function(stat) {
+  const before = money;
+  _origDoUpg(stat);
+  const spent = before - money;
+  if (spent > 0) mpSendAction('spend-money', { amount: spent });
+};
+
+// Wrap sellSel to sync sell refunds
+const _origSellSel = sellSel;
+sellSel = function() {
+  const before = money;
+  const tower = selTower;
+  _origSellSel();
+  const gained = money - before;
+  if (tower) mpSendAction('sell-tower', { x: Math.round(tower.x), y: Math.round(tower.y), refund: gained });
+};
+
+// Wrap buyItem to sync shop purchases
+const _origBuyItem = buyItem;
+buyItem = function(id) {
+  const before = money;
+  _origBuyItem(id);
+  const spent = before - money;
+  if (spent > 0) mpSendAction('spend-money', { amount: spent });
+};
+
+// ── CHAT ─────────────────────────────────────────────────
+let chatOpen = false, unreadCount = 0;
+
+function mpShowChat() {
+  document.getElementById('chatToggleBtn').style.display = 'flex';
+  document.getElementById('partnerLabel').textContent = mpPlayerNum === 1 ? 'P2' : 'P1';
+}
+
+function toggleChat() {
+  chatOpen = !chatOpen;
+  document.getElementById('chatBox').classList.toggle('open', chatOpen);
+  if (chatOpen) {
+    unreadCount = 0;
+    document.getElementById('chatBadge').style.display = 'none';
+    document.getElementById('chatToggleBtn').classList.remove('has-unread');
+    document.getElementById('chatInput').focus();
+    const log = document.getElementById('chatLog');
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+function sendChat() {
+  const input = document.getElementById('chatInput');
+  const msg = input.value.trim();
+  if (!msg) return;
+  input.value = '';
+  addChatMsg('me', mpPlayerNum === 1 ? 'P1' : 'P2', msg);
+  mpSendAction('chat', { text: msg });
+}
+
+function addChatMsg(who, name, text) {
+  const log = document.getElementById('chatLog');
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + who;
+  div.innerHTML = `<span class="chat-who">${name}:</span> ${text}`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  // Unread badge if chat is closed
+  if (!chatOpen && who === 'them') {
+    unreadCount++;
+    const badge = document.getElementById('chatBadge');
+    badge.textContent = unreadCount;
+    badge.style.display = 'flex';
+    document.getElementById('chatToggleBtn').classList.add('has-unread');
+  }
+}
+
+function addChatSys(text) {
+  const log = document.getElementById('chatLog');
+  const div = document.createElement('div');
+  div.className = 'chat-msg sys';
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+// ── PARTNER CURSOR ────────────────────────────────────────
+let cursorThrottle = 0;
+
+function initCursorTracking() {
+  document.addEventListener('mousemove', (e) => {
+    if (mpSolo || !socket || !mpRoom) return;
+    const now = Date.now();
+    if (now - cursorThrottle < 30) return; // max ~33fps
+    cursorThrottle = now;
+    // Send as fraction of screen so different resolutions work
+    mpSendAction('cursor', {
+      x: e.clientX / window.innerWidth,
+      y: e.clientY / window.innerHeight,
+    });
+  });
+}
+
+function updatePartnerCursor(xFrac, yFrac) {
+  const cursor = document.getElementById('partnerCursor');
+  cursor.style.display = 'block';
+  cursor.style.left = (xFrac * window.innerWidth) + 'px';
+  cursor.style.top  = (yFrac * window.innerHeight) + 'px';
+}
+
 // Kick off multiplayer init
 mpInit();
+initCursorTracking();
 </script>
 </body>
 </html>
