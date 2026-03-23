@@ -1380,12 +1380,13 @@ function beginGame(){
   if (!mpSolo && mpPlayerNum === 1 && !mpApplying) {
     mpSendAction('begin-game', { map: activeMap, diff: activeDiff, money, lives });
   }
-  // Force the browser to reflow the layout before reading canvas dimensions,
-  // then resize twice — once now and once after a frame — to guarantee the path builds correctly
+  // Force reflow so gameWrap has real dimensions before building the path
   const wrap = document.getElementById('gameWrap');
-  void wrap.offsetWidth; // force reflow
+  void wrap.offsetWidth;
   resize();
-  requestAnimationFrame(() => { resize(); loop(); });
+  // Call resize again after one frame to catch any remaining layout shifts,
+  // then immediately kick off the game loop (NOT inside rAF so it starts right away)
+  setTimeout(() => { resize(); loop(); }, 50);
 }
 
 // ── LOOP ─────────────────────────────────────────────────
