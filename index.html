@@ -3587,26 +3587,30 @@ function mpInit() {
       document.getElementById('mpDot2').classList.remove('off');
       mpSetStatus2('Both players connected! Starting...', 'ok');
       if (mpPlayerNum === 1) {
-        // P1 sends map+diff and current game state to P2
         setTimeout(() => {
-          mpSendAction('sync-settings', {
-            map: activeMap,
-            diff: activeDiff,
-            // If game is already running, send full state for reconnect
-            inProgress: gs === 'play',
-            wave,
-            money,
-            lives,
-            towers: gs === 'play' ? towers.map(t => ({
-              x: t.x, y: t.y, type: t.type,
-              upgDmg: t.upgDmg, upgSpd: t.upgSpd, upgRng: t.upgRng, upgSpec: t.upgSpec,
-              dmg: t.dmg, rate: t.rate, range: t.range, targetMode: t.targetMode||'first',
-              totalSpent: t.totalSpent,
-            })) : [],
-          });
-          if (gs !== 'play') mpStartGame();
+          // Close the lobby for P1
+          mpStartGame();
+          if (gs !== 'play') {
+            // Fresh game — P1 starts, which broadcasts begin-game to P2
+            beginGame();
+          } else {
+            // Already in game — just send current state to reconnecting P2
+            mpSendAction('sync-settings', {
+              map: activeMap,
+              diff: activeDiff,
+              inProgress: true,
+              wave, money, lives,
+              towers: towers.map(t => ({
+                x: t.x, y: t.y, type: t.type,
+                upgDmg: t.upgDmg, upgSpd: t.upgSpd, upgRng: t.upgRng, upgSpec: t.upgSpec,
+                dmg: t.dmg, rate: t.rate, range: t.range, targetMode: t.targetMode||'first',
+                totalSpent: t.totalSpent,
+              })),
+            });
+          }
         }, 500);
       }
+      // P2: lobby closes when sync-settings or begin-game arrives
     });
 
     // Receive an action from the other player and apply it
@@ -3616,9 +3620,11 @@ function mpInit() {
 
     // Partner disconnected mid-game
     socket.on('partner-left', () => {
-      showToast('⚠️', 'PARTNER LEFT', 'Your co-op partner disconnected.', '#f50057');
-      addChatSys('Partner disconnected.');
+      showToast('⚠️', 'PARTNER LEFT', 'Your co-op partner disconnected. They can rejoin with the same code.', '#f50057');
+      addChatSys('Partner disconnected. They can rejoin with the same room code.');
       document.getElementById('partnerCursor').style.display = 'none';
+      // Reset mpRoom tracking so the room slot opens up again on the server
+      // The socket stays connected so P1 stays in the room
     });
 
   } catch(e) { mpPlaySolo(); }
@@ -3635,7 +3641,13 @@ function mpJoinRoom() {
 function mpLeaveRoom() {
   if (socket && mpRoom) socket.emit('leave-room', mpRoom);
   mpRoom = null;
+  mpPlayerNum = 1;
+  mpConnected = false;
+  mpUnlockStartScreen();
   showStep1();
+  // Disconnect and re-init so they can reconnect cleanly
+  if (socket) { socket.disconnect(); socket = null; }
+  setTimeout(mpInit, 400);
 }
 
 function mpPlaySolo() {
@@ -3654,6 +3666,8 @@ function mpStartGame() {
 function showStep1() {
   document.getElementById('mpStep1').style.display = '';
   document.getElementById('mpStep2').style.display = 'none';
+  document.getElementById('mpDot2').classList.remove('on');
+  document.getElementById('mpDot2').classList.add('off');
 }
 
 function showStep2() {
