@@ -3871,11 +3871,19 @@ function mpQuickMatch() {
   mpSearchSeconds = 0;
   showStepSearch();
   document.getElementById('mpSearchStatus').textContent = `Looking for ${mpMaxPlayers}-player game...`;
-  socket.emit('matchmake', { max: mpMaxPlayers, name: mpMyName });
+
+  // Send matchmake immediately and then every 3 seconds in case server restarted
+  const doEmit = () => {
+    if (!mpMatchmaking) return;
+    socket.emit('matchmake', { max: mpMaxPlayers, name: mpMyName });
+  };
+  doEmit();
   mpSearchTimer = setInterval(() => {
     mpSearchSeconds++;
     document.getElementById('mpSearchStatus').textContent =
       `Searching for ${mpMaxPlayers}-player game... ${mpSearchSeconds}s`;
+    // Re-register with server every 5s in case it restarted and lost the queue
+    if (mpSearchSeconds % 5 === 0) doEmit();
   }, 1000);
 }
 
