@@ -3707,12 +3707,42 @@ let mpVoteCountdownTimer = null;
 
 // Try to connect to the Socket.io server
 function mpInit() {
-  // If no socket.io available (e.g. opened as local file), go straight to solo
   if (typeof io === 'undefined') { mpPlaySolo(); return; }
+  // Don't re-init if already connected
+  if (socket && socket.connected) return;
   try {
-    socket = io({ reconnectionAttempts: 3, timeout: 4000 });
-    socket.on('connect', () => { mpConnected = true; });
-    socket.on('connect_error', () => { mpSetStatus1('Could not reach server. Playing solo.', 'err'); setTimeout(mpPlaySolo, 1800); });
+    socket = io({
+      reconnectionAttempts: Infinity, // keep trying forever
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 8000,
+    });
+
+    socket.on('disconnect', () => {
+      mpConnected = false;
+      // If we were in a game, show a rejoin toast
+      if (gs === 'play' && mpRoom) {
+        showToast('⚠️', 'DISCONNECTED', 'Lost connection. Attempting to rejoin...', '#f50057');
+      }
+    });
+
+    socket.on('connect_error', () => {
+      mpConnected = false;
+      mpSetStatus1('Server unreachable — retrying...', 'err');
+      // Don't auto-solo, just show error and keep trying
+    });
+
+    // When socket reconnects automatically, rejoin the room
+    socket.on('connect', () => {
+      const wasConnected = mpConnected;
+      mpConnected = true;
+      mpSetStatus1('Connected. Enter your callsign to play.', '');
+      // If we had a room and just reconnected, rejoin it automatically
+      if (mpRoom && !wasConnected) {
+        console.log('[reconnect] Rejoining room', mpRoom);
+        socket.emit('join-room', { code: mpRoom, max: mpMaxPlayers, name: mpMyName });
+      }
+    });
 
     // Matchmaking: server found us a partner
     socket.on('matched', (data) => {
@@ -3816,14 +3846,21 @@ function mpJoinRoom() {
 function mpLeaveRoom() {
   if (socket && mpRoom) socket.emit('leave-room', mpRoom);
   if (mpVoteCountdownTimer) { clearInterval(mpVoteCountdownTimer); mpVoteCountdownTimer = null; }
+  if (mpSearchTimer) { clearInterval(mpSearchTimer); mpSearchTimer = null; }
   mpRoom = null;
   mpPlayerNum = 1;
-  mpConnected = false;
   mpVotes = {};
+  mpMatchmaking = false;
   mpUnlockStartScreen();
+  // Show the lobby overlay again so they can rejoin
+  document.getElementById('mpLobbyOv').style.display = 'flex';
   showStep1();
-  if (socket) { socket.disconnect(); socket = null; }
-  setTimeout(mpInit, 400);
+  // Only fully reset socket if it's dead — otherwise reuse the existing connection
+  if (!socket || !socket.connected) {
+    mpConnected = false;
+    if (socket) { socket.disconnect(); socket = null; }
+    setTimeout(mpInit, 400);
+  }
 }
 
 function mpPlaySolo() {
