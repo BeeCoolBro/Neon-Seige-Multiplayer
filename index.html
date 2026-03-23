@@ -79,6 +79,38 @@
   padding:7px 18px;cursor:pointer;transition:all .15s;margin-top:6px;
 }
 .mp-cancel:hover{border-color:rgba(245,0,87,.4);color:#f50057;}
+/* Player count selector */
+.mp-count-row{display:flex;gap:8px;justify-content:center;margin:10px 0 16px;}
+.mp-count-btn{
+  width:52px;height:52px;border-radius:8px;border:1px solid rgba(255,255,255,.1);
+  background:rgba(255,255,255,.03);color:#5a7a98;
+  font-family:'Orbitron',monospace;font-size:16px;font-weight:900;
+  cursor:pointer;transition:all .15s;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:2px;
+}
+.mp-count-btn span{font-size:7px;letter-spacing:1px;font-weight:400;}
+.mp-count-btn:hover{border-color:rgba(0,229,255,.3);color:#cde4ff;background:rgba(0,229,255,.04);}
+.mp-count-btn.active{border-color:#00e5ff;color:#00e5ff;background:rgba(0,229,255,.08);box-shadow:0 0 14px rgba(0,229,255,.15);}
+.mp-dot-row{display:flex;justify-content:center;gap:10px;margin:12px 0;}
+/* Username input */
+.mp-name-input{
+  width:100%;padding:10px 14px;background:rgba(0,229,255,.04);
+  border:1px solid rgba(0,229,255,.2);border-radius:8px;
+  color:#cde4ff;font-family:'Orbitron',monospace;font-size:14px;font-weight:700;
+  letter-spacing:3px;text-align:center;text-transform:uppercase;outline:none;
+  transition:border-color .2s;margin-bottom:16px;
+}
+.mp-name-input:focus{border-color:rgba(0,229,255,.5);box-shadow:0 0 12px rgba(0,229,255,.08);}
+.mp-name-input::placeholder{letter-spacing:1px;font-size:10px;color:#2e4a68;font-weight:400;text-transform:none;}
+/* Player list in waiting room */
+.mp-player-list{display:flex;flex-direction:column;gap:5px;margin:10px 0;width:100%;}
+.mp-player-entry{
+  display:flex;align-items:center;gap:8px;padding:6px 10px;
+  border-radius:6px;background:rgba(255,255,255,.03);
+  border:1px solid rgba(255,255,255,.06);font-family:'Orbitron',monospace;font-size:10px;
+}
+.mp-player-entry .mp-dot{width:8px;height:8px;flex-shrink:0;}
+.mp-player-entry.me{border-color:rgba(0,229,255,.2);}
 
 /* ── CHAT ── */
 #chatBox{
@@ -518,17 +550,30 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
     <div id="mpStep1">
       <div class="mp-logo">NEON SIEGE</div>
       <div class="mp-sub">Co-op Tower Defense</div>
+
+      <!-- Username -->
+      <div class="mp-label" style="margin-bottom:6px">YOUR CALLSIGN</div>
+      <input class="mp-name-input" id="mpNameInput" maxlength="12" placeholder="Enter your name" autocomplete="off" spellcheck="false" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9_]/g,'')">
+
+      <!-- Player count selector -->
+      <div class="mp-label" style="margin-bottom:8px">PLAYERS PER GAME</div>
+      <div class="mp-count-row">
+        <button class="mp-count-btn active" id="mpCount2" onclick="mpSetCount(2)">2<span>PLAYERS</span></button>
+        <button class="mp-count-btn" id="mpCount3" onclick="mpSetCount(3)">3<span>PLAYERS</span></button>
+        <button class="mp-count-btn" id="mpCount4" onclick="mpSetCount(4)">4<span>PLAYERS</span></button>
+      </div>
+
       <button class="mp-btn match" onclick="mpQuickMatch()" style="margin-bottom:8px">⚡ QUICK MATCH</button>
-      <div class="mp-status" style="margin-bottom:16px;font-size:9px">Get matched with a random player instantly</div>
+      <div class="mp-status" style="margin-bottom:16px;font-size:9px">Get matched with random players instantly</div>
       <hr class="mp-divider">
       <div class="mp-section">
-        <div class="mp-label">Play with a friend — enter room code</div>
+        <div class="mp-label">Play with friends — enter room code</div>
         <input class="mp-input" id="mpCodeInput" maxlength="6" placeholder="Enter room code" autocomplete="off" spellcheck="false" oninput="this.value=this.value.toUpperCase().replace(/[^A-Z0-9]/g,'')">
       </div>
       <button class="mp-btn primary" onclick="mpJoinRoom()">▶ JOIN / CREATE ROOM</button>
       <hr class="mp-divider">
       <button class="mp-btn solo" onclick="mpPlaySolo()">⚡ PLAY SOLO</button>
-      <div class="mp-status" id="mpStatus1">Enter any 4–6 letter code. Share it with your friend.</div>
+      <div class="mp-status" id="mpStatus1">Enter your callsign, then choose a mode.</div>
     </div>
 
     <!-- Step 1b: Searching for match -->
@@ -536,23 +581,20 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
       <div class="mp-logo">NEON SIEGE</div>
       <div class="mp-sub">Co-op Tower Defense</div>
       <div style="font-size:40px;margin:18px 0">🔍</div>
-      <div class="mp-searching">SEARCHING FOR PLAYER...</div>
-      <div class="mp-status wait" id="mpSearchStatus">Looking for an opponent...</div>
+      <div class="mp-searching">SEARCHING FOR PLAYERS...</div>
+      <div class="mp-status wait" id="mpSearchStatus">Looking for players...</div>
       <button class="mp-cancel" onclick="mpCancelMatch()">✕ CANCEL</button>
     </div>
 
-    <!-- Step 2: Waiting for partner -->
+    <!-- Step 2: Waiting for players -->
     <div id="mpStep2" style="display:none">
       <div class="mp-logo">NEON SIEGE</div>
       <div class="mp-sub">Co-op Tower Defense</div>
       <div class="mp-label" style="margin-bottom:6px">Your room code</div>
       <div class="mp-room-display" id="mpRoomDisplay">------</div>
-      <div class="mp-label">Share this code with your friend</div>
-      <div class="mp-player-dots">
-        <div class="mp-dot on" id="mpDot1" title="Player 1"></div>
-        <div class="mp-dot off" id="mpDot2" title="Player 2"></div>
-      </div>
-      <div class="mp-status wait" id="mpStatus2">Waiting for your co-op partner...</div>
+      <div class="mp-label">Share this code with your friends</div>
+      <div class="mp-player-list" id="mpPlayerList"></div>
+      <div class="mp-status wait" id="mpStatus2">Waiting for players...</div>
       <hr class="mp-divider">
       <button class="mp-btn secondary" onclick="mpLeaveRoom()">✕ LEAVE ROOM</button>
     </div>
@@ -1406,7 +1448,7 @@ function beginGame(){
   if(sandboxModeEnabled) setTimeout(()=>showToast('⚗','SANDBOX MODE','Custom waves enabled. Score disabled.','#ffd700'),1200);
   if(raf)cancelAnimationFrame(raf);
   if (!mpSolo && mpPlayerNum === 1 && !mpApplying) {
-    mpSendAction('begin-game', { map: activeMap, diff: activeDiff, money, lives });
+    mpSendAction('begin-game', { map: activeMap, diff: activeDiff, money, lives, names: mpPlayerNames });
   }
   // Force reflow so gameWrap has real dimensions before building the path
   const wrap = document.getElementById('gameWrap');
@@ -3618,6 +3660,9 @@ buildAchPanel();
 let socket = null;
 let mpRoom = null;
 let mpPlayerNum = 1;
+let mpMaxPlayers = 2;
+let mpMyName = 'PLAYER';
+let mpPlayerNames = {}; // { playerNum: name }
 let mpConnected = false;
 let mpSolo = false;
 let mpSyncTick = 0;
@@ -3632,36 +3677,54 @@ function mpInit() {
     socket.on('connect_error', () => { mpSetStatus1('Could not reach server. Playing solo.', 'err'); setTimeout(mpPlaySolo, 1800); });
 
     // Matchmaking: server found us a partner
-    socket.on('matched', (code) => {
+    socket.on('matched', (data) => {
       if (mpSearchTimer) { clearInterval(mpSearchTimer); mpSearchTimer = null; }
       mpMatchmaking = false;
-      // Pre-fill the room code and join it
+      const code = typeof data === 'object' ? data.code : data;
+      const max = typeof data === 'object' ? data.max : mpMaxPlayers;
+      mpMaxPlayers = max;
+      mpMyName = mpGetMyName();
+      mpRoom = code;
       document.getElementById('mpCodeInput').value = code;
-      socket.emit('join-room', code);
+      socket.emit('join-room', { code, max, name: mpMyName });
+    });
+
+    // Another player joined — update list
+    socket.on('player-joined', (data) => {
+      mpMaxPlayers = data.max;
+      if (data.names) mpPlayerNames = { ...mpPlayerNames, ...data.names };
+      mpBuildPlayerList(data.total);
+      const waiting = data.max - data.total;
+      mpSetStatus2(waiting > 0 ? `${data.total}/${data.max} players — waiting for ${waiting} more...` : 'All players ready!', waiting > 0 ? 'wait' : 'ok');
     });
 
     // Server confirmed we joined a room
-    socket.on('joined', (num) => {
+    socket.on('joined', (data) => {
+      const num = typeof data === 'object' ? data.num : data;
+      const total = typeof data === 'object' ? data.total : num;
+      const max = typeof data === 'object' ? data.max : mpMaxPlayers;
+      const names = typeof data === 'object' ? (data.names || {}) : {};
       mpPlayerNum = num;
-      mpRoom = document.getElementById('mpCodeInput').value.trim().toUpperCase();
-      showStep2();
+      mpMaxPlayers = max;
+      mpMyName = mpGetMyName();
+      // Store all names we received, plus our own
+      mpPlayerNames = { ...names, [num]: mpMyName };
+      mpRoom = document.getElementById('mpCodeInput').value.trim().toUpperCase() || mpRoom;
+      showStep2(total);
       if (num === 1) {
-        mpSetStatus2('You are Player 1 (Host). Waiting for partner...', 'wait');
+        mpSetStatus2(`Waiting for ${max - 1} more player${max > 2 ? 's' : ''}...`, 'wait');
       } else {
-        // P2: lock start screen immediately so they can't pick map/diff
         mpLockStartScreen();
-        document.getElementById('mpDot2').classList.add('on');
-        document.getElementById('mpDot2').classList.remove('off');
-        mpSetStatus2('Joined! Waiting for host to start...', 'wait');
+        const waiting = max - total;
+        mpSetStatus2(waiting > 0 ? `Waiting for ${waiting} more...` : 'All players connected!', waiting > 0 ? 'wait' : 'ok');
       }
     });
 
-    // Both players are in — start the game
+    // All players are in — start the game
     socket.on('game-ready', () => {
       console.log('[game-ready] fired — mpPlayerNum:', mpPlayerNum, 'gs:', gs);
-      document.getElementById('mpDot2').classList.add('on');
-      document.getElementById('mpDot2').classList.remove('off');
-      mpSetStatus2('Both players connected! Starting...', 'ok');
+      mpBuildDots(mpMaxPlayers); // all dots filled
+      mpSetStatus2('All players connected! Starting...', 'ok');
 
       if (mpPlayerNum === 1) {
         setTimeout(() => {
@@ -3710,9 +3773,10 @@ function mpInit() {
 function mpJoinRoom() {
   const code = document.getElementById('mpCodeInput').value.trim().toUpperCase();
   if (code.length < 4) { mpSetStatus1('Code must be at least 4 characters.', 'err'); return; }
-  if (!mpConnected) { mpSetStatus1('Connecting to server...', 'wait'); setTimeout(() => mpJoinRoom(), 600); return; }
+  if (!mpConnected) { mpSetStatus1('Connecting to server...', 'wait'); setTimeout(mpJoinRoom, 600); return; }
+  mpMyName = mpGetMyName();
   mpSetStatus1('Joining room ' + code + '...', 'wait');
-  socket.emit('join-room', code);
+  socket.emit('join-room', { code, max: mpMaxPlayers, name: mpMyName });
 }
 
 function mpLeaveRoom() {
@@ -3740,12 +3804,50 @@ function mpStartGame() {
   }
 }
 
+function mpSetCount(n) {
+  mpMaxPlayers = n;
+  document.querySelectorAll('.mp-count-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mpCount' + n).classList.add('active');
+}
+
+function mpGetMyName() {
+  const input = document.getElementById('mpNameInput');
+  const val = input ? input.value.trim() : '';
+  mpMyName = val || 'PLAYER' + mpPlayerNum;
+  return mpMyName;
+}
+
+function mpGetName(num) {
+  return mpPlayerNames[num] || 'PLAYER' + num;
+}
+
+const MP_COLORS = ['#00e5ff','#76ff03','#ffea00','#f50057'];
+
+function mpBuildPlayerList(filledCount) {
+  const list = document.getElementById('mpPlayerList');
+  if (!list) return;
+  list.innerHTML = '';
+  for (let i = 1; i <= mpMaxPlayers; i++) {
+    const div = document.createElement('div');
+    div.className = 'mp-player-entry' + (i === mpPlayerNum ? ' me' : '');
+    const filled = i <= filledCount;
+    const name = filled ? mpGetName(i) : '...';
+    const color = MP_COLORS[i - 1];
+    div.innerHTML = `
+      <div class="mp-dot ${filled ? 'on' : 'off'}" style="${filled ? `background:${color};border-color:${color};box-shadow:0 0 8px ${color}` : ''}"></div>
+      <span style="color:${filled ? color : '#2e4a68'};flex:1">${name}</span>
+      ${i === mpPlayerNum ? '<span style="font-size:7px;color:#2e4a68;letter-spacing:1px">YOU</span>' : ''}
+    `;
+    list.appendChild(div);
+  }
+}
+
+function mpBuildDots(filled) { mpBuildPlayerList(filled); }
+
 function showStep1() {
   document.getElementById('mpStep1').style.display = '';
   document.getElementById('mpStep2').style.display = 'none';
   document.getElementById('mpStepSearch').style.display = 'none';
-  document.getElementById('mpDot2').classList.remove('on');
-  document.getElementById('mpDot2').classList.add('off');
 }
 
 function showStepSearch() {
@@ -3765,16 +3867,16 @@ function mpQuickMatch() {
     setTimeout(mpQuickMatch, 600);
     return;
   }
+  mpMyName = mpGetMyName();
   mpMatchmaking = true;
   mpSearchSeconds = 0;
   showStepSearch();
-  document.getElementById('mpSearchStatus').textContent = 'Looking for a player...';
-  socket.emit('matchmake');
-  // Update timer every second
+  document.getElementById('mpSearchStatus').textContent = `Looking for ${mpMaxPlayers}-player game...`;
+  socket.emit('matchmake', { max: mpMaxPlayers, name: mpMyName });
   mpSearchTimer = setInterval(() => {
     mpSearchSeconds++;
     document.getElementById('mpSearchStatus').textContent =
-      `Searching... ${mpSearchSeconds}s`;
+      `Searching for ${mpMaxPlayers}-player game... ${mpSearchSeconds}s`;
   }, 1000);
 }
 
@@ -3785,10 +3887,12 @@ function mpCancelMatch() {
   showStep1();
 }
 
-function showStep2() {
+function showStep2(filledCount) {
   document.getElementById('mpStep1').style.display = 'none';
+  document.getElementById('mpStepSearch').style.display = 'none';
   document.getElementById('mpStep2').style.display = '';
   document.getElementById('mpRoomDisplay').textContent = mpRoom;
+  mpBuildDots(filledCount || 1);
 }
 
 function mpSetStatus1(msg, type) {
@@ -3901,8 +4005,7 @@ function mpApplyRemoteAction(data) {
   }
 
   else if (type === 'chat') {
-    const name = mpPlayerNum === 1 ? 'P2' : 'P1';
-    addChatMsg('them', name, payload.text);
+    addChatMsg('them', payload.name || mpGetName(payload.from || (mpPlayerNum === 1 ? 2 : 1)), payload.text);
   }
 
   else if (type === 'cursor') {
@@ -3971,7 +4074,7 @@ function mpApplyRemoteAction(data) {
   else if (type === 'begin-game') {
     activeMap = payload.map;
     activeDiff = payload.diff;
-    // Hide lobby first so gameWrap has real dimensions, then start
+    if (payload.names) mpPlayerNames = { ...mpPlayerNames, ...payload.names };
     mpStartGame();
     requestAnimationFrame(() => beginGame());
   }
@@ -4094,7 +4197,9 @@ let chatOpen = false, unreadCount = 0;
 
 function mpShowChat() {
   document.getElementById('chatToggleBtn').style.display = 'flex';
-  document.getElementById('partnerLabel').textContent = mpPlayerNum === 1 ? 'P2' : 'P1';
+  // Set cursor label to the other player's name
+  const otherNum = mpPlayerNum === 1 ? 2 : 1;
+  document.getElementById('partnerLabel').textContent = mpGetName(otherNum);
 }
 
 // Lock the start screen so P2 can't pick map/diff/initialize
@@ -4155,8 +4260,8 @@ function sendChat() {
   const msg = input.value.trim();
   if (!msg) return;
   input.value = '';
-  addChatMsg('me', mpPlayerNum === 1 ? 'P1' : 'P2', msg);
-  mpSendAction('chat', { text: msg });
+  addChatMsg('me', mpMyName || 'ME', msg);
+  mpSendAction('chat', { text: msg, name: mpMyName, from: mpPlayerNum });
 }
 
 function addChatMsg(who, name, text) {
