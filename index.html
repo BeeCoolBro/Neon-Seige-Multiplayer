@@ -648,11 +648,8 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
   </div>
 </div>
 
-<!-- ══ PARTNER CURSOR ══ -->
-<div id="partnerCursor">
-  <div class="partner-dot"></div>
-  <div class="partner-label" id="partnerLabel">P2</div>
-</div>
+<!-- ══ PARTNER CURSORS (one per player) ══ -->
+<div id="partnerCursors"></div>
 
 <!-- ══ MAIN LAYOUT ══ -->
 <div id="layout">
@@ -1474,10 +1471,10 @@ function tick(){
   tickWeather();
 
   // In co-op, only P1 runs the enemy simulation. P2 just receives state.
-  const isP2 = !mpSolo && mpPlayerNum === 2;
+  const isNotHost = !mpSolo && mpPlayerNum !== 1;
 
   // Spawn (P1 only in co-op, or solo)
-  if(waveActive && !isP2){
+  if(waveActive && !isNotHost){
     spawnT++;
     if(spawnT>=spawnI){spawnT=0;if(waveQ.length){const e=waveQ.shift();spawnEnemy(e.type,e.sh);}}
     if(!waveQ.length&&!enemies.length){
@@ -1500,7 +1497,7 @@ function tick(){
   }
 
   // Enemy simulation — P1 only in co-op, both in solo
-  if(!isP2){
+  if(!isNotHost){
     for(let i=enemies.length-1;i>=0;i--){
       const e=enemies[i];
       if(e.hp<=0){killEnemy(e,i);continue;}
@@ -1575,7 +1572,7 @@ function tick(){
   }
 
   // Towers shoot — only P1 runs combat in co-op
-  if(!isP2){
+  if(!isNotHost){
   for(const t of towers){
     t.cooldown--;
     if(t.type==='laser'){
@@ -1608,7 +1605,7 @@ function tick(){
   } // end tower shooting
 
   // Vehicles and projectiles — P1 only in co-op
-  if(!isP2){
+  if(!isNotHost){
 
   // Vehicles drive BACKWARDS along path (end→start), ramming enemies head-on
   for(let i=vehicles.length-1;i>=0;i--){
@@ -3707,13 +3704,13 @@ function mpInit() {
       mpPlayerNum = num;
       mpMaxPlayers = max;
       mpMyName = mpGetMyName();
-      // Store all names we received, plus our own
       mpPlayerNames = { ...names, [num]: mpMyName };
       mpRoom = document.getElementById('mpCodeInput').value.trim().toUpperCase() || mpRoom;
       showStep2(total);
       if (num === 1) {
         mpSetStatus2(`Waiting for ${max - 1} more player${max > 2 ? 's' : ''}...`, 'wait');
       } else {
+        // All non-host players lock the start screen
         mpLockStartScreen();
         const waiting = max - total;
         mpSetStatus2(waiting > 0 ? `Waiting for ${waiting} more...` : 'All players connected!', waiting > 0 ? 'wait' : 'ok');
@@ -3729,11 +3726,11 @@ function mpInit() {
       if (mpPlayerNum === 1) {
         setTimeout(() => {
           if (gs === 'play') {
-            // Mid-game reconnect — send current state to P2
+            // Mid-game reconnect — send current state to all other players
             mpStartGame();
             mpSendAction('sync-settings', {
               map: activeMap, diff: activeDiff, inProgress: true,
-              wave, money, lives,
+              wave, money, lives, names: mpPlayerNames,
               towers: towers.map(t => ({
                 x: t.x, y: t.y, type: t.type,
                 upgDmg: t.upgDmg, upgSpd: t.upgSpd, upgRng: t.upgRng, upgSpec: t.upgSpec,
@@ -3742,15 +3739,13 @@ function mpInit() {
               })),
             });
           } else {
-            // Fresh game — close lobby and show P1 the start screen to pick map
-            // P1 clicks Initialize which will call beginGame() and send begin-game to P2
+            // Fresh game — show P1 the start screen to pick map
             mpStartGame();
-            // Make sure start screen is visible for P1 to pick map
             document.getElementById('startOv').style.display = 'flex';
           }
         }, 600);
       }
-      // P2 already has start screen locked — just waits for begin-game message
+      // All non-host players wait for begin-game message
     });
 
     // Receive an action from the other player and apply it
@@ -3758,13 +3753,17 @@ function mpInit() {
       mpApplyRemoteAction(data);
     });
 
-    // Partner disconnected mid-game
-    socket.on('partner-left', () => {
-      showToast('⚠️', 'PARTNER LEFT', 'Your co-op partner disconnected. They can rejoin with the same code.', '#f50057');
-      addChatSys('Partner disconnected. They can rejoin with the same room code.');
-      document.getElementById('partnerCursor').style.display = 'none';
-      // Reset mpRoom tracking so the room slot opens up again on the server
-      // The socket stays connected so P1 stays in the room
+    // A player disconnected mid-game
+    socket.on('partner-left', (data) => {
+      const leaverNum = data && data.num;
+      const leaverName = leaverNum ? mpGetName(leaverNum) : 'A player';
+      showToast('⚠️', 'PLAYER LEFT', `${leaverName} disconnected. They can rejoin with the same code.`, '#f50057');
+      addChatSys(`${leaverName} disconnected.`);
+      // Hide that player's cursor
+      if (leaverNum) {
+        const cur = document.getElementById('mpCursor' + leaverNum);
+        if (cur) cur.style.display = 'none';
+      }
     });
 
   } catch(e) { mpPlaySolo(); }
@@ -4009,7 +4008,7 @@ function mpApplyRemoteAction(data) {
   }
 
   else if (type === 'cursor') {
-    updatePartnerCursor(payload.x, payload.y);
+    mpUpdateCursor(payload.from || (mpPlayerNum === 1 ? 2 : 1), payload.x, payload.y);
   }
 
   else if (type === 'enemy-sync') {
@@ -4197,9 +4196,32 @@ let chatOpen = false, unreadCount = 0;
 
 function mpShowChat() {
   document.getElementById('chatToggleBtn').style.display = 'flex';
-  // Set cursor label to the other player's name
-  const otherNum = mpPlayerNum === 1 ? 2 : 1;
-  document.getElementById('partnerLabel').textContent = mpGetName(otherNum);
+  // Create a cursor element for each other player
+  const container = document.getElementById('partnerCursors');
+  container.innerHTML = '';
+  for (let i = 1; i <= mpMaxPlayers; i++) {
+    if (i === mpPlayerNum) continue;
+    const color = MP_COLORS[i - 1];
+    const div = document.createElement('div');
+    div.id = 'mpCursor' + i;
+    div.style.cssText = `position:fixed;pointer-events:none;z-index:9998;display:none;transform:translate(-4px,-4px);transition:left .05s linear,top .05s linear;`;
+    div.innerHTML = `
+      <div style="width:12px;height:12px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 0 10px ${color},0 0 20px ${color}44"></div>
+      <div style="font-family:'Orbitron',monospace;font-size:8px;font-weight:700;color:${color};margin-top:2px;white-space:nowrap;text-shadow:0 0 8px ${color}">${mpGetName(i)}</div>
+    `;
+    container.appendChild(div);
+  }
+}
+
+function mpUpdateCursor(fromNum, xFrac, yFrac) {
+  const cur = document.getElementById('mpCursor' + fromNum);
+  if (!cur) return;
+  cur.style.display = 'block';
+  cur.style.left = (xFrac * window.innerWidth) + 'px';
+  cur.style.top = (yFrac * window.innerHeight) + 'px';
+  // Update label in case name arrived after cursor was created
+  const label = cur.querySelector('div:last-child');
+  if (label) label.textContent = mpGetName(fromNum);
 }
 
 // Lock the start screen so P2 can't pick map/diff/initialize
@@ -4297,12 +4319,12 @@ function initCursorTracking() {
   document.addEventListener('mousemove', (e) => {
     if (mpSolo || !socket || !mpRoom) return;
     const now = Date.now();
-    if (now - cursorThrottle < 30) return; // max ~33fps
+    if (now - cursorThrottle < 30) return;
     cursorThrottle = now;
-    // Send as fraction of screen so different resolutions work
     mpSendAction('cursor', {
       x: e.clientX / window.innerWidth,
       y: e.clientY / window.innerHeight,
+      from: mpPlayerNum,
     });
   });
 }
