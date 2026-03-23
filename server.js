@@ -20,12 +20,19 @@ function makeRoomCode() {
 }
 
 function getRoomNames(room) {
-  // Returns { playerNum: name } for all joined players
   const names = {};
-  room.players.forEach((id, i) => {
-    names[i + 1] = room.names[id] || ('PLAYER' + (i + 1));
-  });
+  room.players.forEach((id, i) => { names[i + 1] = room.names[id] || ('PLAYER' + (i + 1)); });
   return names;
+}
+
+function notifyLeave(socket, code) {
+  if (!rooms[code]) return;
+  const room = rooms[code];
+  const leaverIdx = room.players.indexOf(socket.id);
+  const leaverNum = leaverIdx + 1;
+  room.players = room.players.filter(id => id !== socket.id);
+  delete room.names[socket.id];
+  socket.to(code).emit('partner-left', { num: leaverNum, name: room.names[socket.id] });
 }
 
 io.on('connection', socket => {
@@ -35,13 +42,10 @@ io.on('connection', socket => {
     const max = Math.min(4, Math.max(2, (data && data.max) ? data.max : 2));
     const name = (data && data.name) ? data.name : 'PLAYER';
     socket.matchName = name;
-
     matchQueues[max] = matchQueues[max].filter(s => s.connected);
     if (!matchQueues[max].find(s => s.id === socket.id)) {
       matchQueues[max].push(socket);
-      socket.matchMax = max;
     }
-
     if (matchQueues[max].length >= max) {
       const players = matchQueues[max].splice(0, max);
       const code = makeRoomCode();
@@ -62,13 +66,9 @@ io.on('connection', socket => {
 
     if (!rooms[code]) rooms[code] = { players: [], names: {}, max };
     const room = rooms[code];
-
     room.players = room.players.filter(id => io.sockets.sockets.has(id));
 
-    if (room.players.length >= room.max) {
-      socket.emit('room-full');
-      return;
-    }
+    if (room.players.length >= room.max) { socket.emit('room-full'); return; }
 
     socket.join(code);
     socket.currentRoom = code;
@@ -76,27 +76,27 @@ io.on('connection', socket => {
     room.names[socket.id] = name;
 
     const playerNum = room.players.length;
-    const total = room.players.length;
     const names = getRoomNames(room);
 
-    socket.emit('joined', { num: playerNum, total, max: room.max, names });
+    socket.emit('joined', { num: playerNum, total: playerNum, max: room.max, names });
+    socket.to(code).emit('player-joined', { total: playerNum, max: room.max, names });
     console.log(`Room ${code} [${room.max}p]: ${name} joined as P${playerNum}`);
 
-    // Tell waiting players someone joined
-    socket.to(code).emit('player-joined', { total, max: room.max, names });
-
-    if (total >= room.max) {
+    if (playerNum >= room.max) {
       io.to(code).emit('game-ready');
       console.log(`Room ${code}: game ready!`);
     }
   });
 
   socket.on('leave-room', (code) => {
-    if (rooms[code]) {
-      rooms[code].players = rooms[code].players.filter(id => id !== socket.id);
-      delete rooms[code].names[socket.id];
+    const room = rooms[code];
+    if (room) {
+      const idx = room.players.indexOf(socket.id);
+      const num = idx + 1;
+      room.players = room.players.filter(id => id !== socket.id);
+      delete room.names[socket.id];
+      socket.to(code).emit('partner-left', { num });
     }
-    socket.to(code).emit('partner-left');
     socket.leave(code);
     socket.currentRoom = null;
   });
@@ -109,17 +109,19 @@ io.on('connection', socket => {
     [2, 3, 4].forEach(n => { matchQueues[n] = matchQueues[n].filter(s => s.id !== socket.id); });
     const code = socket.currentRoom;
     if (code && rooms[code]) {
-      rooms[code].players = rooms[code].players.filter(id => id !== socket.id);
-      delete rooms[code].names[socket.id];
-      socket.to(code).emit('partner-left');
-      if (rooms[code].players.length === 0) {
+      const room = rooms[code];
+      const idx = room.players.indexOf(socket.id);
+      const num = idx + 1;
+      room.players = room.players.filter(id => id !== socket.id);
+      delete room.names[socket.id];
+      socket.to(code).emit('partner-left', { num });
+      if (room.players.length === 0) {
         setTimeout(() => {
-          if (rooms[code] && rooms[code].players.length === 0) {
-            delete rooms[code];
-          }
+          if (rooms[code] && rooms[code].players.length === 0) delete rooms[code];
         }, 10 * 60 * 1000);
       }
     }
+    console.log('Player disconnected:', socket.id);
   });
 });
 
