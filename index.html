@@ -3340,6 +3340,8 @@ function openDevMode(){
     _devUnlocked=true;
   }
   money=99999999; updateHUD(); updateAfford();
+  // Sync the money to partner in co-op
+  if(!mpSolo && mpRoom) mpSendAction('set-money', { amount: 99999999 });
   showToast('🛠️','DEV MODE','Loaded ¢99,999,999','#ffd700');
   addFloater(canvas.width/2,canvas.height/2,'🛠 DEV MODE ACTIVATED','#ffd700',22);
 }
@@ -3910,6 +3912,24 @@ function mpApplyRemoteAction(data) {
     if (a && a.cd === 0) { a.fn(); a.cd = a.maxCd; updateAbilityBar(); }
   }
 
+  else if (type === 'upgrade-tower') {
+    // Find the tower by position and apply the upgraded stats
+    const t = towers.find(t => Math.round(t.x) === payload.x && Math.round(t.y) === payload.y);
+    if (t) {
+      t.dmg = payload.dmg; t.rate = payload.rate; t.range = payload.range;
+      t.splash = payload.splash; t.chain = payload.chain;
+      t.upgDmg = payload.upgDmg; t.upgSpd = payload.upgSpd;
+      t.upgRng = payload.upgRng; t.upgSpec = payload.upgSpec;
+    }
+  }
+
+  else if (type === 'set-money') {
+    // Dev mode or direct money set from partner
+    money = payload.amount;
+    bump('pillCash');
+    updateHUD(); updateAfford();
+  }
+
   else if (type === 'earn-money') {
     // Partner killed an enemy — we get the same reward (shared economy)
     money += payload.amount;
@@ -3957,10 +3977,22 @@ useAbility = function(idx) {
 
 const _origDoUpg = doUpg;
 doUpg = function(stat) {
+  if (!selTower) return;
   const before = money;
+  const tx = Math.round(selTower.x), ty = Math.round(selTower.y);
   _origDoUpg(stat);
   const spent = before - money;
-  if (spent > 0 && !mpApplying) mpSendAction('spend-money', { amount: spent });
+  if (spent > 0 && !mpApplying) {
+    mpSendAction('spend-money', { amount: spent });
+    // Send the full upgrade so partner's tower gets the same stat boost
+    mpSendAction('upgrade-tower', {
+      x: tx, y: ty, stat,
+      dmg: selTower.dmg, rate: selTower.rate, range: selTower.range,
+      splash: selTower.splash, chain: selTower.chain,
+      upgDmg: selTower.upgDmg, upgSpd: selTower.upgSpd,
+      upgRng: selTower.upgRng, upgSpec: selTower.upgSpec,
+    });
+  }
 };
 
 const _origSellSel = sellSel;
