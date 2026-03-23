@@ -1349,7 +1349,6 @@ function goMenu(){
 
 // ── INIT ─────────────────────────────────────────────────
 function beginGame(){
-  console.log('[beginGame] called — map:', activeMap, 'diff:', activeDiff, 'mpPlayerNum:', mpPlayerNum, 'mpSolo:', mpSolo, 'mpRoom:', mpRoom);
   const m=MAPS[activeMap], diff=getDiff();
   money=Math.max(50, m.startMoney+(shopBought.bonus_money?100:0)+diff.startMoneyBonus);
   lives=Math.max(5, m.lives+(shopBought.extra_lives?25:0)+diff.livesBonus);
@@ -3591,10 +3590,9 @@ function mpInit() {
 
       if (mpPlayerNum === 1) {
         setTimeout(() => {
-          console.log('[game-ready P1] calling mpStartGame + beginGame, gs=', gs);
-          mpStartGame(); // hide lobby
           if (gs === 'play') {
             // Mid-game reconnect — send current state to P2
+            mpStartGame();
             mpSendAction('sync-settings', {
               map: activeMap, diff: activeDiff, inProgress: true,
               wave, money, lives,
@@ -3606,12 +3604,15 @@ function mpInit() {
               })),
             });
           } else {
-            // Fresh game — start for P1, which auto-sends begin-game to P2
-            beginGame();
+            // Fresh game — close lobby and show P1 the start screen to pick map
+            // P1 clicks Initialize which will call beginGame() and send begin-game to P2
+            mpStartGame();
+            // Make sure start screen is visible for P1 to pick map
+            document.getElementById('startOv').style.display = 'flex';
           }
         }, 600);
       }
-      // P2 waits for begin-game or sync-settings message
+      // P2 already has start screen locked — just waits for begin-game message
     });
 
     // Receive an action from the other player and apply it
