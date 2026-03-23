@@ -598,6 +598,8 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
         <div class="ov-logo" style="animation:titlePulse 3s ease-in-out infinite">NEON SIEGE</div>
         <div class="ov-logo-sub">Cyber Tower Defense</div>
         <div class="ov-version">v6.0 — CLASSIFIED</div>
+        <!-- P2 waiting message (shown when P2 is in co-op) -->
+        <div id="p2WaitMsg" style="display:none;font-family:'Orbitron',monospace;font-size:11px;color:var(--g);letter-spacing:2px;margin-bottom:12px;animation:mpPulse 1.2s ease-in-out infinite">⏳ WAITING FOR HOST TO START...</div>
         <div class="map-grid" id="mapGrid" style="grid-template-columns:1fr 1fr 1fr;width:720px;">
           <div class="map-card sel-map" onclick="selectMap(0)" id="mc0"><div class="map-card-name" style="color:var(--c)">⚡ NEON HIGHWAY</div><div class="map-card-diff" style="color:var(--gn)">★★☆☆☆ EASY</div><div class="map-card-desc">7 turns, 52px wide road.<br>Lots of build space. 40 waves.</div></div>
           <div class="map-card" onclick="selectMap(1)" id="mc1"><div class="map-card-name" style="color:var(--c)">✖ DOUBLE CROSS</div><div class="map-card-diff" style="color:var(--gn)">★★★☆☆ EASY-MED</div><div class="map-card-desc">Figure-8, enemies cross twice.<br>48px path. 42 waves.</div></div>
@@ -613,14 +615,14 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
           <div class="diff-card diff-hard" onclick="selectDiff(2)" id="dc2"><div class="diff-card-icon">🔥</div><div class="diff-card-name">HARD</div><div class="diff-card-tag">Tougher · less cash</div></div>
           <div class="diff-card diff-insane" onclick="selectDiff(3)" id="dc3"><div class="diff-card-icon">💀</div><div class="diff-card-name">INSANE</div><div class="diff-card-tag">Maximum pain</div></div>
         </div>
-        <div class="sandbox-toggle-row">
+        <div class="sandbox-toggle-row" id="sandboxRow">
           <button class="sandbox-toggle-btn" id="sandboxToggleBtn" onclick="toggleSandboxMode()">
             <span class="sandbox-toggle-icon">⚗</span><span>SANDBOX MODE</span>
             <span class="sandbox-toggle-status" id="sandboxToggleStatus">OFF</span>
           </button>
           <div class="sandbox-desc-txt">No score. Send custom waves at any time during play.</div>
         </div>
-        <div class="action-row">
+        <div class="action-row" id="initRow">
           <button class="glow-btn c" onclick="beginGame()">▶ INITIALIZE</button>
           <button class="glow-btn g" onclick="openSaveLoad()">💾 LOAD GAME</button>
         </div>
@@ -1378,6 +1380,10 @@ function beginGame(){
   showToast(diff.icon, diff.name+' MODE', diff.desc, diff.color);
   if(sandboxModeEnabled) setTimeout(()=>showToast('⚗','SANDBOX MODE','Custom waves enabled. Score disabled.','#ffd700'),1200);
   if(raf)cancelAnimationFrame(raf);
+  // In co-op, P1 tells P2 to begin the game with the same settings
+  if (!mpSolo && mpPlayerNum === 1) {
+    mpSendAction('begin-game', { map: activeMap, diff: activeDiff, money, lives });
+  }
   loop();
 }
 
@@ -3567,10 +3573,11 @@ function mpInit() {
       if (num === 1) {
         mpSetStatus2('You are Player 1 (Host). Waiting for partner...', 'wait');
       } else {
-        // Player 2 joined — light up both dots immediately
+        // P2: lock start screen immediately so they can't pick map/diff
+        mpLockStartScreen();
         document.getElementById('mpDot2').classList.add('on');
         document.getElementById('mpDot2').classList.remove('off');
-        mpSetStatus2('Player 2 connected! Starting...', 'ok');
+        mpSetStatus2('Joined! Waiting for host to start...', 'wait');
       }
     });
 
@@ -3580,13 +3587,26 @@ function mpInit() {
       document.getElementById('mpDot2').classList.remove('off');
       mpSetStatus2('Both players connected! Starting...', 'ok');
       if (mpPlayerNum === 1) {
-        // P1: send map+diff to P2, then start immediately
+        // P1 sends map+diff and current game state to P2
         setTimeout(() => {
-          mpSendAction('sync-settings', { map: activeMap, diff: activeDiff });
-          mpStartGame();
+          mpSendAction('sync-settings', {
+            map: activeMap,
+            diff: activeDiff,
+            // If game is already running, send full state for reconnect
+            inProgress: gs === 'play',
+            wave,
+            money,
+            lives,
+            towers: gs === 'play' ? towers.map(t => ({
+              x: t.x, y: t.y, type: t.type,
+              upgDmg: t.upgDmg, upgSpd: t.upgSpd, upgRng: t.upgRng, upgSpec: t.upgSpec,
+              dmg: t.dmg, rate: t.rate, range: t.range, targetMode: t.targetMode||'first',
+              totalSpent: t.totalSpent,
+            })) : [],
+          });
+          if (gs !== 'play') mpStartGame();
         }, 500);
       }
-      // P2 waits — mpStartGame is called inside sync-settings handler below
     });
 
     // Receive an action from the other player and apply it
@@ -3668,12 +3688,47 @@ function mpApplyRemoteAction(data) {
 
   // Player 2 receives host's map + difficulty — apply and start
   if (type === 'sync-settings') {
-    // Force the correct map and difficulty before starting
     activeMap = payload.map;
     activeDiff = payload.diff;
-    selectMap(payload.map);   // updates the UI highlight
-    selectDiff(payload.diff); // updates the UI highlight
-    mpStartGame();            // closes lobby
+    selectMap(payload.map);
+    selectDiff(payload.diff);
+
+    if (payload.inProgress && payload.towers) {
+      // Reconnecting mid-game — restore full game state then start
+      wave = payload.wave || 0;
+      money = payload.money || 200;
+      lives = payload.lives || 100;
+      // Restore towers
+      towers = payload.towers.map(td => {
+        const def = TDEFS[td.type];
+        return {
+          x: td.x, y: td.y, type: td.type,
+          name: def.name, color: def.color,
+          dmg: td.dmg, rate: td.rate, range: td.range,
+          splash: def.splash, ps: def.ps, chain: def.chain,
+          cooldown: 0, angle: -Math.PI/2, kills: 0, shootFlash: 0,
+          upgDmg: td.upgDmg, upgSpd: td.upgSpd, upgRng: td.upgRng, upgSpec: td.upgSpec,
+          totalSpent: td.totalSpent, special: def.special,
+          laserTarget: null, spinAngle: 0, targetMode: td.targetMode||'first',
+          vehicleCooldown: 0, vehicle: null,
+        };
+      });
+      // Close overlays and jump straight into the game
+      ['startOv','deadOv','winOv','shopOv','saveOv','pauseOv'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
+      gs = 'play'; paused = false; speed = 1;
+      resize();
+      buildTowerList(); buildEnemyLegend(); buildShopUI();
+      updateHUD(); updateSel(); updateAbilityBar();
+      mpStartGame();
+      loop();
+      addChatSys('Reconnected to game in progress!');
+    } else {
+      // Fresh start — just close the lobby, P2 waits for P1 to hit Initialize
+      mpStartGame();
+    }
     return;
   }
 
@@ -3748,6 +3803,13 @@ function mpApplyRemoteAction(data) {
     sfx('waveClear');
     document.getElementById('waveBtn').disabled = false;
     updateHUD();
+  }
+
+  else if (type === 'begin-game') {
+    // P1 pressed Initialize — P2 starts the game with the same settings
+    activeMap = payload.map;
+    activeDiff = payload.diff;
+    beginGame();
   }
 
   else if (type === 'launch-wave') {
@@ -3825,6 +3887,46 @@ let chatOpen = false, unreadCount = 0;
 function mpShowChat() {
   document.getElementById('chatToggleBtn').style.display = 'flex';
   document.getElementById('partnerLabel').textContent = mpPlayerNum === 1 ? 'P2' : 'P1';
+}
+
+// Lock the start screen so P2 can't pick map/diff/initialize
+function mpLockStartScreen() {
+  // Disable all map cards
+  document.querySelectorAll('.map-card').forEach(c => {
+    c.style.pointerEvents = 'none';
+    c.style.opacity = '0.4';
+  });
+  // Disable all diff cards
+  document.querySelectorAll('.diff-card').forEach(c => {
+    c.style.pointerEvents = 'none';
+    c.style.opacity = '0.4';
+  });
+  // Hide initialize/load/sandbox
+  const initRow = document.getElementById('initRow');
+  const sandboxRow = document.getElementById('sandboxRow');
+  if (initRow) initRow.style.display = 'none';
+  if (sandboxRow) sandboxRow.style.display = 'none';
+  // Show waiting message
+  const msg = document.getElementById('p2WaitMsg');
+  if (msg) msg.style.display = 'block';
+}
+
+// Unlock start screen (for solo or P1)
+function mpUnlockStartScreen() {
+  document.querySelectorAll('.map-card').forEach(c => {
+    c.style.pointerEvents = '';
+    c.style.opacity = '';
+  });
+  document.querySelectorAll('.diff-card').forEach(c => {
+    c.style.pointerEvents = '';
+    c.style.opacity = '';
+  });
+  const initRow = document.getElementById('initRow');
+  const sandboxRow = document.getElementById('sandboxRow');
+  if (initRow) initRow.style.display = '';
+  if (sandboxRow) sandboxRow.style.display = '';
+  const msg = document.getElementById('p2WaitMsg');
+  if (msg) msg.style.display = 'none';
 }
 
 function toggleChat() {
