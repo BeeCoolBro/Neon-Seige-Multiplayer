@@ -79,6 +79,30 @@
   padding:7px 18px;cursor:pointer;transition:all .15s;margin-top:6px;
 }
 .mp-cancel:hover{border-color:rgba(245,0,87,.4);color:#f50057;}
+/* Vote screen */
+#mpStepVote{width:100%;}
+.mp-vote-maps{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:8px 0 12px;}
+.mp-vote-map{
+  padding:8px 6px;border-radius:6px;border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.02);cursor:pointer;transition:all .12s;text-align:center;
+  position:relative;
+}
+.mp-vote-map:hover{border-color:rgba(0,229,255,.3);background:rgba(0,229,255,.04);}
+.mp-vote-map.my-vote{border-color:#00e5ff;background:rgba(0,229,255,.08);box-shadow:0 0 12px rgba(0,229,255,.15);}
+.mp-vote-map-name{font-family:'Orbitron',monospace;font-size:8px;font-weight:700;color:#cde4ff;margin-bottom:3px;}
+.mp-vote-map-votes{display:flex;gap:3px;justify-content:center;flex-wrap:wrap;min-height:14px;margin-top:4px;}
+.mp-vote-pip{width:8px;height:8px;border-radius:50%;}
+.mp-vote-diffs{display:flex;gap:5px;margin:0 0 10px;}
+.mp-vote-diff{
+  flex:1;padding:6px 4px;border-radius:5px;border:1px solid rgba(255,255,255,.08);
+  background:rgba(255,255,255,.02);cursor:pointer;transition:all .12s;text-align:center;
+}
+.mp-vote-diff:hover{border-color:rgba(255,255,255,.2);}
+.mp-vote-diff.my-vote{box-shadow:0 0 10px currentColor;}
+.mp-vote-diff-name{font-family:'Orbitron',monospace;font-size:8px;font-weight:700;}
+.mp-vote-diff-votes{font-size:7px;color:#5a7a98;margin-top:2px;min-height:12px;}
+.mp-vote-status{font-family:'Orbitron',monospace;font-size:9px;color:#5a7a98;text-align:center;margin-top:6px;}
+.mp-vote-countdown{font-family:'Orbitron',monospace;font-size:22px;font-weight:900;color:#76ff03;text-align:center;margin:8px 0;text-shadow:0 0 16px #76ff03;}
 /* Player count selector */
 .mp-count-row{display:flex;gap:8px;justify-content:center;margin:10px 0 16px;}
 .mp-count-btn{
@@ -597,6 +621,18 @@ body::after{content:'';position:fixed;inset:0;background:repeating-linear-gradie
       <div class="mp-status wait" id="mpStatus2">Waiting for players...</div>
       <hr class="mp-divider">
       <button class="mp-btn secondary" onclick="mpLeaveRoom()">✕ LEAVE ROOM</button>
+    </div>
+
+    <!-- Step 3: Vote on map + difficulty -->
+    <div id="mpStepVote" style="display:none">
+      <div class="mp-logo">NEON SIEGE</div>
+      <div class="mp-sub">Vote for your map</div>
+      <div class="mp-label" style="margin-bottom:6px">MAP VOTE</div>
+      <div class="mp-vote-maps" id="mpVoteMaps"></div>
+      <div class="mp-label" style="margin-bottom:6px">DIFFICULTY VOTE</div>
+      <div class="mp-vote-diffs" id="mpVoteDiffs"></div>
+      <div class="mp-vote-status" id="mpVoteStatus">Cast your vote!</div>
+      <div class="mp-vote-countdown" id="mpVoteCountdown" style="display:none"></div>
     </div>
 
   </div>
@@ -3663,6 +3699,11 @@ let mpPlayerNames = {}; // { playerNum: name }
 let mpConnected = false;
 let mpSolo = false;
 let mpSyncTick = 0;
+// Voting state
+let mpVotes = {}; // { playerNum: { map, diff } }
+let mpMyMapVote = 0;
+let mpMyDiffVote = 0;
+let mpVoteCountdownTimer = null;
 
 // Try to connect to the Socket.io server
 function mpInit() {
@@ -3710,42 +3751,36 @@ function mpInit() {
       if (num === 1) {
         mpSetStatus2(`Waiting for ${max - 1} more player${max > 2 ? 's' : ''}...`, 'wait');
       } else {
-        // All non-host players lock the start screen
-        mpLockStartScreen();
         const waiting = max - total;
         mpSetStatus2(waiting > 0 ? `Waiting for ${waiting} more...` : 'All players connected!', waiting > 0 ? 'wait' : 'ok');
       }
     });
 
-    // All players are in — start the game
+    // All players are in — show voting screen
     socket.on('game-ready', () => {
       console.log('[game-ready] fired — mpPlayerNum:', mpPlayerNum, 'gs:', gs);
-      mpBuildDots(mpMaxPlayers); // all dots filled
+      mpBuildDots(mpMaxPlayers);
       mpSetStatus2('All players connected! Starting...', 'ok');
 
-      if (mpPlayerNum === 1) {
-        setTimeout(() => {
-          if (gs === 'play') {
-            // Mid-game reconnect — send current state to all other players
-            mpStartGame();
-            mpSendAction('sync-settings', {
-              map: activeMap, diff: activeDiff, inProgress: true,
-              wave, money, lives, names: mpPlayerNames,
-              towers: towers.map(t => ({
-                x: t.x, y: t.y, type: t.type,
-                upgDmg: t.upgDmg, upgSpd: t.upgSpd, upgRng: t.upgRng, upgSpec: t.upgSpec,
-                dmg: t.dmg, rate: t.rate, range: t.range, targetMode: t.targetMode||'first',
-                totalSpent: t.totalSpent,
-              })),
-            });
-          } else {
-            // Fresh game — show P1 the start screen to pick map
-            mpStartGame();
-            document.getElementById('startOv').style.display = 'flex';
-          }
-        }, 600);
-      }
-      // All non-host players wait for begin-game message
+      setTimeout(() => {
+        if (gs === 'play' && mpPlayerNum === 1) {
+          // Mid-game reconnect — send current state
+          mpStartGame();
+          mpSendAction('sync-settings', {
+            map: activeMap, diff: activeDiff, inProgress: true,
+            wave, money, lives, names: mpPlayerNames,
+            towers: towers.map(t => ({
+              x: t.x, y: t.y, type: t.type,
+              upgDmg: t.upgDmg, upgSpd: t.upgSpd, upgRng: t.upgRng, upgSpec: t.upgSpec,
+              dmg: t.dmg, rate: t.rate, range: t.range, targetMode: t.targetMode||'first',
+              totalSpent: t.totalSpent,
+            })),
+          });
+        } else if (gs !== 'play') {
+          // Fresh game — show vote screen for ALL players
+          showStepVote();
+        }
+      }, 600);
     });
 
     // Receive an action from the other player and apply it
@@ -3780,12 +3815,13 @@ function mpJoinRoom() {
 
 function mpLeaveRoom() {
   if (socket && mpRoom) socket.emit('leave-room', mpRoom);
+  if (mpVoteCountdownTimer) { clearInterval(mpVoteCountdownTimer); mpVoteCountdownTimer = null; }
   mpRoom = null;
   mpPlayerNum = 1;
   mpConnected = false;
+  mpVotes = {};
   mpUnlockStartScreen();
   showStep1();
-  // Disconnect and re-init so they can reconnect cleanly
   if (socket) { socket.disconnect(); socket = null; }
   setTimeout(mpInit, 400);
 }
@@ -3797,9 +3833,10 @@ function mpPlaySolo() {
 
 function mpStartGame() {
   document.getElementById('mpLobbyOv').style.display = 'none';
+  if (mpVoteCountdownTimer) { clearInterval(mpVoteCountdownTimer); mpVoteCountdownTimer = null; }
   if (!mpSolo) {
     mpShowChat();
-    addChatSys('Co-op session started! Say hi to your partner 👋');
+    addChatSys('Co-op session started! Say hi to your team 👋');
   }
 }
 
@@ -3842,6 +3879,121 @@ function mpBuildPlayerList(filledCount) {
 }
 
 function mpBuildDots(filled) { mpBuildPlayerList(filled); }
+
+// ── VOTING ────────────────────────────────────────────────
+function showStepVote() {
+  document.getElementById('mpStep1').style.display = 'none';
+  document.getElementById('mpStep2').style.display = 'none';
+  document.getElementById('mpStepSearch').style.display = 'none';
+  document.getElementById('mpStepVote').style.display = '';
+  mpVotes = {};
+  mpMyMapVote = 0;
+  mpMyDiffVote = 0;
+  mpRenderVoteScreen();
+}
+
+function mpRenderVoteScreen() {
+  // Build map cards
+  const mapGrid = document.getElementById('mpVoteMaps');
+  mapGrid.innerHTML = '';
+  MAPS.forEach((m, i) => {
+    const div = document.createElement('div');
+    div.className = 'mp-vote-map' + (mpMyMapVote === i ? ' my-vote' : '');
+    div.onclick = () => mpCastVote(i, mpMyDiffVote);
+    // Count votes for this map
+    const voters = Object.entries(mpVotes).filter(([,v]) => v.map === i);
+    const pips = voters.map(([num]) => {
+      const color = MP_COLORS[parseInt(num) - 1] || '#cde4ff';
+      return `<div class="mp-vote-pip" style="background:${color};box-shadow:0 0 5px ${color}" title="${mpGetName(parseInt(num))}"></div>`;
+    }).join('');
+    div.innerHTML = `
+      <div class="mp-vote-map-name">${m.name}</div>
+      <div class="mp-vote-map-votes">${pips}</div>
+    `;
+    mapGrid.appendChild(div);
+  });
+
+  // Build diff cards
+  const diffRow = document.getElementById('mpVoteDiffs');
+  diffRow.innerHTML = '';
+  DIFFICULTIES.forEach((d, i) => {
+    const div = document.createElement('div');
+    div.className = 'mp-vote-diff' + (mpMyDiffVote === i ? ' my-vote' : '');
+    div.style.color = d.color;
+    div.style.borderColor = mpMyDiffVote === i ? d.color : 'rgba(255,255,255,.08)';
+    div.onclick = () => mpCastVote(mpMyMapVote, i);
+    const voters = Object.entries(mpVotes).filter(([,v]) => v.diff === i);
+    const names = voters.map(([num]) => mpGetName(parseInt(num))).join(', ');
+    div.innerHTML = `
+      <div class="mp-vote-diff-name">${d.icon} ${d.name}</div>
+      <div class="mp-vote-diff-votes">${names || ''}</div>
+    `;
+    diffRow.appendChild(div);
+  });
+
+  // Status
+  const voted = Object.keys(mpVotes).length;
+  const total = mpMaxPlayers;
+  const status = document.getElementById('mpVoteStatus');
+  status.textContent = voted >= total
+    ? 'All votes in! Starting...'
+    : `${voted}/${total} players voted`;
+}
+
+function mpCastVote(mapIdx, diffIdx) {
+  mpMyMapVote = mapIdx;
+  mpMyDiffVote = diffIdx;
+  mpVotes[mpPlayerNum] = { map: mapIdx, diff: diffIdx };
+  mpSendAction('vote', { map: mapIdx, diff: diffIdx, from: mpPlayerNum });
+  mpRenderVoteScreen();
+  mpCheckAllVoted();
+}
+
+function mpCheckAllVoted() {
+  const voted = Object.keys(mpVotes).length;
+  if (voted < mpMaxPlayers) return;
+
+  // All voted — tally results
+  if (mpVoteCountdownTimer) return; // already counting down
+  const result = mpTallyVotes();
+
+  // Show 3-second countdown then start
+  let count = 3;
+  const cd = document.getElementById('mpVoteCountdown');
+  cd.style.display = 'block';
+  cd.textContent = count;
+  document.getElementById('mpVoteStatus').textContent =
+    `${MAPS[result.map].name} · ${DIFFICULTIES[result.diff].name} — Starting in...`;
+
+  mpVoteCountdownTimer = setInterval(() => {
+    count--;
+    cd.textContent = count;
+    if (count <= 0) {
+      clearInterval(mpVoteCountdownTimer);
+      mpVoteCountdownTimer = null;
+      // All players start with the winning map/diff
+      activeMap = result.map;
+      activeDiff = result.diff;
+      selectMap(result.map);
+      selectDiff(result.diff);
+      mpStartGame();
+      beginGame();
+    }
+  }, 1000);
+}
+
+function mpTallyVotes() {
+  // Count map votes — most votes wins, ties broken by lower map index
+  const mapCounts = {};
+  const diffCounts = {};
+  Object.values(mpVotes).forEach(v => {
+    mapCounts[v.map] = (mapCounts[v.map] || 0) + 1;
+    diffCounts[v.diff] = (diffCounts[v.diff] || 0) + 1;
+  });
+  const winMap = Object.entries(mapCounts).sort((a,b) => b[1]-a[1] || a[0]-b[0])[0][0];
+  const winDiff = Object.entries(diffCounts).sort((a,b) => b[1]-a[1] || a[0]-b[0])[0][0];
+  return { map: parseInt(winMap), diff: parseInt(winDiff) };
+}
 
 function showStep1() {
   document.getElementById('mpStep1').style.display = '';
@@ -4076,6 +4228,15 @@ function mpApplyRemoteAction(data) {
     sfx('waveClear');
     document.getElementById('waveBtn').disabled = false;
     updateHUD();
+  }
+
+  else if (type === 'vote') {
+    // Receive another player's vote
+    mpVotes[payload.from] = { map: payload.map, diff: payload.diff };
+    if (document.getElementById('mpStepVote').style.display !== 'none') {
+      mpRenderVoteScreen();
+    }
+    mpCheckAllVoted();
   }
 
   else if (type === 'begin-game') {
