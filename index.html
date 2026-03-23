@@ -1397,8 +1397,11 @@ function tick(){
   if(streakTimer>0){streakTimer--;if(streakTimer<=0)killStreak=0;}
   tickWeather();
 
-  // Spawn
-  if(waveActive){
+  // In co-op, only P1 runs the enemy simulation. P2 just receives state.
+  const isP2 = !mpSolo && mpPlayerNum === 2;
+
+  // Spawn (P1 only in co-op, or solo)
+  if(waveActive && !isP2){
     spawnT++;
     if(spawnT>=spawnI){spawnT=0;if(waveQ.length){const e=waveQ.shift();spawnEnemy(e.type,e.sh);}}
     if(!waveQ.length&&!enemies.length){
@@ -1409,6 +1412,8 @@ function tick(){
       effects.push({type:'flash',a:.18,color:'#00fff7',life:20,grow:0});
       sfx('waveClear');
       awardInterest();
+      // Tell P2 the wave is over too
+      if(!mpSolo) mpSendAction('wave-clear', { bonus, wave });
       if(wave>=MAPS[activeMap].waves){endGame('win');return;}
       document.getElementById('waveBtn').disabled=false;
       updateHUD(); checkAchs();
@@ -1418,62 +1423,78 @@ function tick(){
     }
   }
 
-  // Enemies
-  for(let i=enemies.length-1;i>=0;i--){
-    const e=enemies[i];
-    // Always check for death even while frozen
-    if(e.hp<=0){killEnemy(e,i);continue;}
-    if(e.frozen>0){
-      e.frozen--;
-      // Grant immunity when thawing so cryo can't perma-freeze
-      if(e.frozen===0) e.freezeImmune=120; // 2 seconds immunity after thaw
-      // Still draw trail while frozen
-      if(Math.random()<.15)trails.push({x:e.x,y:e.y,color:'rgba(79,195,247,.4)',size:e.size*.4,life:12});
-      continue;
-    }
-    // Freeze immunity: brief window after thawing so enemies can't be perma-frozen
-    if(e.freezeImmune>0){e.freezeImmune--;}
-    const spd=e.speed*(freezeActive>0?.2:1)*(e.slowed>0?.5:1)*getWeather().enemySpeedMult;
-    if(e.slowed>0)e.slowed--;
-    e.dist+=spd;
-    const p=posAt(e.dist); e.x=p.x; e.y=p.y;
-    e.angle=e.dist>0?Math.atan2(p.y-posAt(e.dist-spd-0.01).y,p.x-posAt(e.dist-spd-0.01).x):0;
-    if(e.burn>0){e.burn--;e.hp-=3;if(e.hp<=0){killEnemy(e,i);continue;}}
-    if(e.special==='heals'){for(const o of enemies)if(o!==e&&d2(e,o)<80&&o.hp<o.maxHp)o.hp=Math.min(o.maxHp,o.hp+0.4);}
-    // Shield drone: regenerates a shield that blocks one hit
-    if(e.special==='shielded'){
-      if(e.shieldCd>0)e.shieldCd--;
-      if(!e.shield&&e.shieldCd<=0){e.shield=true;addFloater(e.x,e.y-20,'🔵 SHIELD UP','#44ccff',11);}
-    }
-    // Teleporter: blinks forward along path every few seconds
-    if(e.special==='teleport'){
-      e.blinkCd=(e.blinkCd||0)-1;
-      if(e.blinkCd<=0){
-        const jump=PL*0.12;
-        e.dist=Math.min(PL-20,e.dist+jump);
-        spawnBurst(e.x,e.y,'#ff44cc',14);
-        const np=posAt(e.dist);
-        spawnBurst(np.x,np.y,'#ff44cc',14);
-        addFloater(np.x,np.y-20,'⚡ BLINK!','#ff44cc',12);
-        e.blinkCd=180+Math.floor(Math.random()*120);
+  // Enemy simulation — P1 only in co-op, both in solo
+  if(!isP2){
+    for(let i=enemies.length-1;i>=0;i--){
+      const e=enemies[i];
+      if(e.hp<=0){killEnemy(e,i);continue;}
+      if(e.frozen>0){
+        e.frozen--;
+        if(e.frozen===0) e.freezeImmune=120;
+        if(Math.random()<.15)trails.push({x:e.x,y:e.y,color:'rgba(79,195,247,.4)',size:e.size*.4,life:12});
+        continue;
       }
-    }
-    if(Math.random()<.3)trails.push({x:e.x,y:e.y,color:e.glow,size:e.size*.5,life:16});
-    if(e.dist>=PL){
-      if(shieldActive>0){shieldActive--;spawnBurst(e.x,e.y,'#39ff14',16);addFloater(e.x,e.y-20,'🛡 BLOCKED!','#39ff14',14);}
-      else{
-        lives-=e.dmg; killStreak=0;
-        spawnBurst(e.x,e.y,'#ff007a',18);
-        effects.push({type:'flash',a:.55,color:'#ff007a',life:18,grow:0});
-        sfx('baseHit');
-        shakeScreen();
+      if(e.freezeImmune>0){e.freezeImmune--;}
+      const spd=e.speed*(freezeActive>0?.2:1)*(e.slowed>0?.5:1)*getWeather().enemySpeedMult;
+      if(e.slowed>0)e.slowed--;
+      e.dist+=spd;
+      const p=posAt(e.dist); e.x=p.x; e.y=p.y;
+      e.angle=e.dist>0?Math.atan2(p.y-posAt(e.dist-spd-0.01).y,p.x-posAt(e.dist-spd-0.01).x):0;
+      if(e.burn>0){e.burn--;e.hp-=3;if(e.hp<=0){killEnemy(e,i);continue;}}
+      if(e.special==='heals'){for(const o of enemies)if(o!==e&&d2(e,o)<80&&o.hp<o.maxHp)o.hp=Math.min(o.maxHp,o.hp+0.4);}
+      if(e.special==='shielded'){
+        if(e.shieldCd>0)e.shieldCd--;
+        if(!e.shield&&e.shieldCd<=0){e.shield=true;addFloater(e.x,e.y-20,'🔵 SHIELD UP','#44ccff',11);}
       }
-      enemies.splice(i,1);
-      if(lives<=0){endGame('lose');return;}
-      bump('pillHp'); updateHUD();
-      continue;
+      if(e.special==='teleport'){
+        e.blinkCd=(e.blinkCd||0)-1;
+        if(e.blinkCd<=0){
+          const jump=PL*0.12;
+          e.dist=Math.min(PL-20,e.dist+jump);
+          spawnBurst(e.x,e.y,'#ff44cc',14);
+          const np=posAt(e.dist);
+          spawnBurst(np.x,np.y,'#ff44cc',14);
+          addFloater(np.x,np.y-20,'⚡ BLINK!','#ff44cc',12);
+          e.blinkCd=180+Math.floor(Math.random()*120);
+        }
+      }
+      if(Math.random()<.3)trails.push({x:e.x,y:e.y,color:e.glow,size:e.size*.5,life:16});
+      if(e.dist>=PL){
+        if(shieldActive>0){shieldActive--;spawnBurst(e.x,e.y,'#39ff14',16);addFloater(e.x,e.y-20,'🛡 BLOCKED!','#39ff14',14);}
+        else{
+          lives-=e.dmg; killStreak=0;
+          spawnBurst(e.x,e.y,'#ff007a',18);
+          effects.push({type:'flash',a:.55,color:'#ff007a',life:18,grow:0});
+          sfx('baseHit');
+          shakeScreen();
+        }
+        enemies.splice(i,1);
+        if(lives<=0){endGame('lose');return;}
+        bump('pillHp'); updateHUD();
+        continue;
+      }
+      if(e.hp<=0)killEnemy(e,i);
     }
-    if(e.hp<=0)killEnemy(e,i);
+  } // end enemy simulation
+
+  // P1 broadcasts enemy state to P2 every 6 ticks
+  if(!mpSolo && mpPlayerNum === 1 && gs === 'play') {
+    mpSyncTick = (mpSyncTick||0) + 1;
+    if(mpSyncTick >= 6) {
+      mpSyncTick = 0;
+      mpSendAction('enemy-sync', {
+        enemies: enemies.map(e => ({
+          type: e.type, x: e.x, y: e.y, dist: e.dist,
+          hp: e.hp, maxHp: e.maxHp, frozen: e.frozen||0,
+          slowed: e.slowed||0, burn: e.burn||0, shield: e.shield||false,
+          special: e.special, size: e.size, color: e.color, glow: e.glow,
+          armor: e.armor, speed: e.speed, reward: e.reward, dmg: e.dmg,
+          angle: e.angle||0, spinAngle: e.spinAngle||0,
+        })),
+        lives,
+        waveActive,
+      });
+    }
   }
 
   // Towers shoot
@@ -1579,8 +1600,8 @@ function tick(){
 
 function killEnemy(e,idx){
   money+=e.reward;
-  // Co-op: partner gets the same reward so both players share the economy
-  if (!mpSolo) mpSendAction('earn-money', { amount: e.reward });
+  // Co-op: P1 owns kills — tell P2 to add the reward too
+  if (!mpSolo && mpPlayerNum === 1) mpSendAction('earn-money', { amount: e.reward });
   if(!sandboxModeEnabled) score+=Math.round(e.reward*10*getDiff().scoreMultiplier);
   kills++; killStreak++; streakTimer=180;
   sessionStats.creditsEarned=(sessionStats.creditsEarned||0)+e.reward;
@@ -3558,14 +3579,14 @@ function mpInit() {
       document.getElementById('mpDot2').classList.add('on');
       document.getElementById('mpDot2').classList.remove('off');
       mpSetStatus2('Both players connected! Starting...', 'ok');
-      // Player 1 sends map/difficulty to Player 2 first, then both start
       if (mpPlayerNum === 1) {
+        // P1: send map+diff to P2, then start immediately
         setTimeout(() => {
           mpSendAction('sync-settings', { map: activeMap, diff: activeDiff });
-          setTimeout(mpStartGame, 800);
-        }, 300);
+          mpStartGame();
+        }, 500);
       }
-      // Player 2 waits for sync-settings before starting (see mpApplyRemoteAction)
+      // P2 waits — mpStartGame is called inside sync-settings handler below
     });
 
     // Receive an action from the other player and apply it
@@ -3645,12 +3666,14 @@ function mpApplyRemoteAction(data) {
   if (!data) return;
   const { type, payload } = data;
 
-  // Player 2 receives host's map + difficulty and starts the game
+  // Player 2 receives host's map + difficulty — apply and start
   if (type === 'sync-settings') {
-    selectMap(payload.map);
-    selectDiff(payload.diff);
-    mpSetStatus2('Map synced! Starting...', 'ok');
-    setTimeout(mpStartGame, 500);
+    // Force the correct map and difficulty before starting
+    activeMap = payload.map;
+    activeDiff = payload.diff;
+    selectMap(payload.map);   // updates the UI highlight
+    selectDiff(payload.diff); // updates the UI highlight
+    mpStartGame();            // closes lobby
     return;
   }
 
@@ -3699,6 +3722,32 @@ function mpApplyRemoteAction(data) {
 
   else if (type === 'cursor') {
     updatePartnerCursor(payload.x, payload.y);
+  }
+
+  else if (type === 'enemy-sync') {
+    // P2 receives enemy state from P1 and replaces its local list
+    enemies = payload.enemies.map(d => ({
+      ...d,
+      freeze: d.frozen||0, freezeImmune: 0,
+      blinkCd: 0, shieldCd: 0, isSplit: false,
+    }));
+    // Sync lives too so P2 sees damage
+    if (payload.lives !== undefined) lives = payload.lives;
+    waveActive = payload.waveActive;
+    updateHUD();
+  }
+
+  else if (type === 'wave-clear') {
+    // P2 mirrors the wave-clear event
+    waveActive = false;
+    money += payload.bonus;
+    score += Math.round(200 * payload.wave * getDiff().scoreMultiplier);
+    addFloater(canvas.width/2, canvas.height/2-16, `✓ WAVE ${payload.wave} CLEAR!`, '#00fff7', 20);
+    addFloater(canvas.width/2, canvas.height/2+16, `+¢${payload.bonus} BONUS`, '#ffd700', 16);
+    effects.push({type:'flash', a:.18, color:'#00fff7', life:20, grow:0});
+    sfx('waveClear');
+    document.getElementById('waveBtn').disabled = false;
+    updateHUD();
   }
 
   else if (type === 'launch-wave') {
