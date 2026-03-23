@@ -8,46 +8,46 @@ const io = new Server(server, { cors: { origin: '*' } });
 
 app.use(express.static('.'));
 
-const rooms = {}; // roomCode -> [socketId, socketId]
+// rooms[code] = { players: [socketId, ...], started: bool }
+const rooms = {};
 
 io.on('connection', socket => {
   console.log('Player connected:', socket.id);
 
   socket.on('join-room', (code) => {
-    if (!rooms[code]) rooms[code] = [];
+    if (!rooms[code]) rooms[code] = { players: [], started: false };
+    const room = rooms[code];
 
-    // Max 2 players per room
-    if (rooms[code].length >= 2) {
+    // Allow up to 2 players (reconnect replaces old slot)
+    if (room.players.length >= 2) {
       socket.emit('room-full');
       return;
     }
 
     socket.join(code);
     socket.currentRoom = code;
-    rooms[code].push(socket.id);
+    room.players.push(socket.id);
 
-    const playerNum = rooms[code].length;
+    const playerNum = room.players.length;
     socket.emit('joined', playerNum);
-    console.log(`Room ${code}: player ${playerNum} joined`);
+    console.log(`Room ${code}: player ${playerNum} joined (started: ${room.started})`);
 
-    // Both players present — start the game
+    // Trigger game-ready when 2 players present
     if (playerNum === 2) {
       io.to(code).emit('game-ready');
-      console.log(`Room ${code}: game starting!`);
+      room.started = true;
     }
   });
 
   socket.on('leave-room', (code) => {
     if (rooms[code]) {
-      rooms[code] = rooms[code].filter(id => id !== socket.id);
+      rooms[code].players = rooms[code].players.filter(id => id !== socket.id);
       socket.to(code).emit('partner-left');
-      if (rooms[code].length === 0) delete rooms[code];
     }
     socket.leave(code);
     socket.currentRoom = null;
   });
 
-  // Relay player actions to the other person in the room
   socket.on('player-action', (data) => {
     socket.to(data.room).emit('player-action', data);
   });
@@ -56,9 +56,17 @@ io.on('connection', socket => {
     console.log('Player disconnected:', socket.id);
     const code = socket.currentRoom;
     if (code && rooms[code]) {
-      rooms[code] = rooms[code].filter(id => id !== socket.id);
+      rooms[code].players = rooms[code].players.filter(id => id !== socket.id);
       socket.to(code).emit('partner-left');
-      if (rooms[code].length === 0) delete rooms[code];
+      // Clean up empty rooms after 5 minutes
+      if (rooms[code].players.length === 0) {
+        setTimeout(() => {
+          if (rooms[code] && rooms[code].players.length === 0) {
+            delete rooms[code];
+            console.log(`Room ${code} cleaned up`);
+          }
+        }, 5 * 60 * 1000);
+      }
     }
   });
 });
