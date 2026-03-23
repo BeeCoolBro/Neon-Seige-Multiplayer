@@ -1365,26 +1365,27 @@ function beginGame(){
   if(aBtn){aBtn.textContent='AUTO';aBtn.style.cssText='';}
   sessionStats={placed:0,sold:0,abilitiesUsed:0,biggestBurst:0,totalDmg:0,creditsEarned:0};
   abilities.forEach(a=>a.cd=0);
-  resize(); // rebuilds path for chosen map
   ['startOv','deadOv','winOv','shopOv','saveOv','pauseOv'].forEach(id=>document.getElementById(id).style.display='none');
   document.getElementById('waveBtn').disabled=false;
   document.getElementById('speedBtn').textContent='1×';
   buildTowerList(); buildEnemyLegend(); buildShopUI();
   updateHUD(); updateSel(); updateAbilityBar();
-  // Show/hide sandbox badge and HUD button based on mode
   const sandboxBadge=document.querySelector('.sandbox-badge');
   const sandboxHudBtn=document.getElementById('sandboxHudBtn');
   if(sandboxBadge) sandboxBadge.style.display=sandboxModeEnabled?'block':'none';
   if(sandboxHudBtn) sandboxHudBtn.style.display=sandboxModeEnabled?'':'none';
-  // Show difficulty toast
   showToast(diff.icon, diff.name+' MODE', diff.desc, diff.color);
   if(sandboxModeEnabled) setTimeout(()=>showToast('⚗','SANDBOX MODE','Custom waves enabled. Score disabled.','#ffd700'),1200);
   if(raf)cancelAnimationFrame(raf);
-  // In co-op, P1 tells P2 to begin the game with the same settings
   if (!mpSolo && mpPlayerNum === 1 && !mpApplying) {
     mpSendAction('begin-game', { map: activeMap, diff: activeDiff, money, lives });
   }
-  loop();
+  // Force the browser to reflow the layout before reading canvas dimensions,
+  // then resize twice — once now and once after a frame — to guarantee the path builds correctly
+  const wrap = document.getElementById('gameWrap');
+  void wrap.offsetWidth; // force reflow
+  resize();
+  requestAnimationFrame(() => { resize(); loop(); });
 }
 
 // ── LOOP ─────────────────────────────────────────────────
