@@ -1043,6 +1043,8 @@ function buildPath(){
   const W=canvas.width, H=canvas.height;
   PATH=m.path(W,H).map(([x,y])=>({x,y}));
   PL=pathLen();
+  markBGDirty();
+  markPathDirty();
 }
 function pathLen(){let l=0;for(let i=1;i<PATH.length;i++)l+=d2(PATH[i-1],PATH[i]);return l;}
 function posAt(dist){
@@ -1485,25 +1487,27 @@ function tick(){
 
   // P1 broadcasts enemy state to P2 every 6 ticks
   if(!mpSolo && mpPlayerNum === 1 && gs === 'play') {
-    mpSyncTick = (mpSyncTick||0) + 1;
+    mpSyncTick++;
     if(mpSyncTick >= 6) {
       mpSyncTick = 0;
       mpSendAction('enemy-sync', {
-        enemies: enemies.map(e => ({
-          type: e.type, x: e.x, y: e.y, dist: e.dist,
-          hp: e.hp, maxHp: e.maxHp, frozen: e.frozen||0,
-          slowed: e.slowed||0, burn: e.burn||0, shield: e.shield||false,
-          special: e.special, size: e.size, color: e.color, glow: e.glow,
-          armor: e.armor, speed: e.speed, reward: e.reward, dmg: e.dmg,
-          angle: e.angle||0, spinAngle: e.spinAngle||0,
-        })),
-        lives,
-        waveActive,
+        // Only send the minimum fields P2 needs to render
+        e: enemies.map(e => [
+          e.x, e.y, e.hp, e.maxHp, e.type, e.dist,
+          e.frozen||0, e.slowed||0, e.burn||0, e.shield?1:0, e.angle||0
+        ]),
+        l: lives,
+        w: waveActive ? 1 : 0,
+        // Sync tower angles and shoot flash so P2 sees towers shooting
+        t: towers.map(t => [t.angle||0, t.shootFlash||0, t.cooldown||0]),
+        // Sync projectiles so P2 sees them
+        p: projs.map(p => [p.x, p.y, p.color, p.size||4]),
       });
     }
   }
 
-  // Towers shoot
+  // Towers shoot — only P1 runs combat in co-op
+  if(!isP2){
   for(const t of towers){
     t.cooldown--;
     if(t.type==='laser'){
@@ -1517,7 +1521,6 @@ function tick(){
         } else t.laserTarget=null;
       }
     } else if(t.type==='base'){
-      // Military base: spawn vehicle when cooldown done and no active vehicle
       if(t.cooldown<=0&&!t.vehicle&&waveActive){
         const v=spawnVehicle(t);
         t.vehicle=v; vehicles.push(v);
@@ -1534,12 +1537,15 @@ function tick(){
     }
     if(t.shootFlash>0)t.shootFlash--;
   }
+  } // end tower shooting
+
+  // Vehicles and projectiles — P1 only in co-op
+  if(!isP2){
 
   // Vehicles drive BACKWARDS along path (end→start), ramming enemies head-on
   for(let i=vehicles.length-1;i>=0;i--){
     const v=vehicles[i];
     if(v.hp<=0||v.dist<=0){
-      // destroyed or reached the path start — detach and schedule next deploy
       if(v.tower){
         v.tower.vehicle=null;
         v.tower.cooldown=Math.round(v.tower.rate/globalBonuses.rateMult);
@@ -1549,32 +1555,24 @@ function tick(){
       continue;
     }
     const spd=v.speed*(freezeActive>0?.25:1);
-    v.dist=Math.max(0,v.dist-spd); // move backwards toward path start
+    v.dist=Math.max(0,v.dist-spd);
     v.wheelAng=(v.wheelAng||0)+spd*0.18;
     const p=posAt(v.dist);
-    const ahead=posAt(Math.min(PL,v.dist+spd+0.01)); // "behind" in world = forward in drive direction
+    const ahead=posAt(Math.min(PL,v.dist+spd+0.01));
     v.x=p.x; v.y=p.y;
-    v.angle=Math.atan2(p.y-ahead.y,p.x-ahead.x); // face toward lower dist (backwards)
+    v.angle=Math.atan2(p.y-ahead.y,p.x-ahead.x);
     if(v.flashTimer>0)v.flashTimer--;
-
-    // Tick down per-enemy hit cooldowns (prevents hitting same enemy every frame)
     if(!v.hitCD)v.hitCD=new Map();
     for(const [e,cd] of v.hitCD){
       if(cd<=1)v.hitCD.delete(e);
       else v.hitCD.set(e,cd-1);
     }
-
-    // Leave tread-mark trail
     if(Math.random()<.4)trails.push({x:v.x,y:v.y,color:'rgba(120,200,120,.28)',size:5,life:20});
-
-    // Ram enemies within contact radius
     for(let j=enemies.length-1;j>=0;j--){
       const e=enemies[j];
       if(v.hitCD.has(e))continue;
-      // Contact radius: vehicle half-width (10px) + enemy radius
       const contactR=10+e.size;
       if(d2(v,e)<contactR){
-        // Vehicle loses HP equal to the enemy's CURRENT hp — already-damaged enemies cost less
         v.hp-=e.hp; v.flashTimer=5;
         sessionStats.totalDmg+=e.hp;
         if(v.tower)v.tower.kills++;
@@ -1594,13 +1592,19 @@ function tick(){
     else{p.x+=(dx/dd)*p.speed;p.y+=(dy/dd)*p.speed;if(Math.random()<.4)trails.push({x:p.x,y:p.y,color:p.color+'50',size:p.size*.65,life:7});}
   }
 
+  } // end vehicles + projectiles P1 only
+
   // Particles / effects
   for(let i=parts.length-1;i>=0;i--){const p=parts[i];p.x+=p.vx;p.y+=p.vy;p.vy+=.1;p.vx*=.97;p.life--;if(p.life<=0)parts.splice(i,1);}
   for(let i=trails.length-1;i>=0;i--){trails[i].life--;if(trails[i].life<=0)trails.splice(i,1);}
   for(let i=floaters.length-1;i>=0;i--){floaters[i].y-=.9;floaters[i].life--;if(floaters[i].life<=0)floaters.splice(i,1);}
   for(let i=effects.length-1;i>=0;i--){const ef=effects[i];ef.r+=ef.grow;ef.a*=.92;ef.life--;if(ef.life<=0)effects.splice(i,1);}
 
-  updateHUD(); checkAchs(); updateStatsPanel();
+  updateHUD();
+  // Only update stats panel and check achievements every 60 ticks (~1s) to avoid DOM thrash
+  if(typeof _slowTick==='undefined')window._slowTick=0;
+  _slowTick++;
+  if(_slowTick>=60){_slowTick=0;checkAchs();updateStatsPanel();}
   if(musicPlaying&&musicBeat%16===0)updateMusicPhase();
 }
 
@@ -1886,105 +1890,139 @@ function render(){
   drawHoverTooltip();
 }
 
-// ambient particle pool for background atmosphere
-const _ambParts=Array.from({length:40},()=>({
+// ── OFFSCREEN CANVAS FOR STATIC BACKGROUND ───────────────
+let bgCanvas = null, bgCtx = null, bgDirty = true;
+
+function markBGDirty() { bgDirty = true; }
+
+function ensureBGCanvas(W, H) {
+  if (!bgCanvas || bgCanvas.width !== W || bgCanvas.height !== H) {
+    bgCanvas = document.createElement('canvas');
+    bgCanvas.width = W; bgCanvas.height = H;
+    bgCtx = bgCanvas.getContext('2d');
+    bgDirty = true;
+  }
+  if (!bgDirty) return;
+  bgDirty = false;
+  const c = bgCtx;
+  c.clearRect(0, 0, W, H);
+  // Background
+  c.fillStyle = '#03070f'; c.fillRect(0, 0, W, H);
+  // Grid — draw all lines in two batches (vertical + horizontal)
+  c.strokeStyle = 'rgba(0,255,247,.025)'; c.lineWidth = 1;
+  c.beginPath();
+  for (let x = 0; x < W; x += 48) { c.moveTo(x, 0); c.lineTo(x, H); }
+  for (let y = 0; y < H; y += 48) { c.moveTo(0, y); c.lineTo(W, y); }
+  c.stroke();
+  // Corner brackets
+  c.strokeStyle = 'rgba(0,255,247,.14)'; c.lineWidth = 1.5;
+  [[0,0,1,1],[W,0,-1,1],[0,H,1,-1],[W,H,-1,-1]].forEach(([cx,cy,sx,sy]) => {
+    c.beginPath(); c.moveTo(cx+sx*22,cy); c.lineTo(cx,cy); c.lineTo(cx,cy+sy*22); c.stroke();
+  });
+}
+
+// ── OFFSCREEN CANVAS FOR STATIC PATH ─────────────────────
+let pathCanvas = null, pathCtx = null, pathDirty = true;
+
+function markPathDirty() { pathDirty = true; }
+
+function ensurePathCanvas(W, H) {
+  if (!pathCanvas || pathCanvas.width !== W || pathCanvas.height !== H) {
+    pathCanvas = document.createElement('canvas');
+    pathCanvas.width = W; pathCanvas.height = H;
+    pathCtx = pathCanvas.getContext('2d');
+    pathDirty = true;
+  }
+  if (!pathDirty || PATH.length < 2) return;
+  pathDirty = false;
+  const c = pathCtx;
+  c.clearRect(0, 0, W, H);
+  // Glow aura
+  c.shadowBlur = 30; c.shadowColor = 'rgba(0,255,247,.1)';
+  c.strokeStyle = 'rgba(0,255,247,.06)'; c.lineWidth = PATHR + 24;
+  c.lineCap = 'round'; c.lineJoin = 'round';
+  c.beginPath(); c.moveTo(PATH[0].x, PATH[0].y);
+  for (let i = 1; i < PATH.length; i++) c.lineTo(PATH[i].x, PATH[i].y);
+  c.stroke(); c.shadowBlur = 0;
+  // Dark road
+  c.strokeStyle = '#060f1e'; c.lineWidth = PATHR;
+  c.beginPath(); c.moveTo(PATH[0].x, PATH[0].y);
+  for (let i = 1; i < PATH.length; i++) c.lineTo(PATH[i].x, PATH[i].y);
+  c.stroke();
+  // Lane markings
+  c.strokeStyle = 'rgba(255,255,255,.04)'; c.lineWidth = 1;
+  c.setLineDash([22, 16]);
+  c.beginPath(); c.moveTo(PATH[0].x, PATH[0].y);
+  for (let i = 1; i < PATH.length; i++) c.lineTo(PATH[i].x, PATH[i].y);
+  c.stroke(); c.setLineDash([]);
+  // Neon edge
+  c.shadowBlur = 12; c.shadowColor = 'rgba(0,255,247,.5)';
+  c.strokeStyle = 'rgba(0,255,247,.25)'; c.lineWidth = 1.5;
+  c.beginPath(); c.moveTo(PATH[0].x, PATH[0].y);
+  for (let i = 1; i < PATH.length; i++) c.lineTo(PATH[i].x, PATH[i].y);
+  c.stroke(); c.shadowBlur = 0;
+  // Directional arrows
+  c.fillStyle = 'rgba(0,255,247,.18)';
+  const numArrows = Math.floor(PL / 120);
+  for (let ai = 1; ai <= numArrows; ai++) {
+    const d = ai * 120, p = posAt(d), p2 = posAt(Math.min(PL, d + 10));
+    const ang = Math.atan2(p2.y - p.y, p2.x - p.x);
+    c.save(); c.translate(p.x, p.y); c.rotate(ang);
+    c.beginPath(); c.moveTo(6,0); c.lineTo(-4,-4); c.lineTo(-4,4); c.closePath(); c.fill();
+    c.restore();
+  }
+  // START node
+  const s = PATH[0];
+  c.shadowBlur = 25; c.shadowColor = '#00fff7';
+  c.fillStyle = '#00fff7'; c.beginPath(); c.arc(s.x, s.y, 22, 0, Math.PI*2); c.fill();
+  c.shadowBlur = 0; c.fillStyle = '#03070f';
+  c.font = 'bold 9px Orbitron'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.fillText('START', s.x, s.y);
+}
+
+// Reduced ambient particles — no shadowBlur
+const _ambParts=Array.from({length:20},()=>({
   x:Math.random()*2000, y:Math.random()*1200,
   vx:(Math.random()-.5)*.3, vy:-Math.random()*.4-.1,
-  size:Math.random()*1.5+.5, alpha:Math.random()*.4+.1,
+  size:Math.random()*1.5+.5, alpha:Math.random()*.3+.08,
   color:Math.random()<.6?'#00fff7':Math.random()<.5?'#ff007a':'#ffd700'
 }));
 
 function drawBG(W,H){
-  ctx.fillStyle='#03070f'; ctx.fillRect(0,0,W,H);
-  // Grid
-  ctx.strokeStyle='rgba(0,255,247,.025)'; ctx.lineWidth=1;
-  for(let x=0;x<W;x+=48){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke();}
-  for(let y=0;y<H;y+=48){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
-  // Ambient floating particles
+  ensureBGCanvas(W,H);
+  ctx.drawImage(bgCanvas,0,0);
+  // Ambient particles — shadowBlur removed for perf
   for(const p of _ambParts){
     p.x+=p.vx; p.y+=p.vy;
     if(p.y<-10){p.y=H+10;p.x=Math.random()*W;}
     if(p.x<-10)p.x=W+10; if(p.x>W+10)p.x=-10;
-    ctx.globalAlpha=p.alpha*(gs==='play'?.35:1);
+    ctx.globalAlpha=p.alpha*(gs==='play'?.25:.8);
     ctx.fillStyle=p.color;
-    ctx.shadowBlur=6; ctx.shadowColor=p.color;
     ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();
   }
-  ctx.globalAlpha=1; ctx.shadowBlur=0;
-  // Corner brackets
-  ctx.strokeStyle='rgba(0,255,247,.14)'; ctx.lineWidth=1.5;
-  [[0,0,1,1],[W,0,-1,1],[0,H,1,-1],[W,H,-1,-1]].forEach(([cx,cy,sx,sy])=>{
-    ctx.beginPath();ctx.moveTo(cx+sx*22,cy);ctx.lineTo(cx,cy);ctx.lineTo(cx,cy+sy*22);ctx.stroke();
-  });
+  ctx.globalAlpha=1;
 }
 
 function drawPath(){
   if(PATH.length<2)return;
-  // Glow aura
-  ctx.shadowBlur=30; ctx.shadowColor='rgba(0,255,247,.1)';
-  ctx.strokeStyle='rgba(0,255,247,.06)'; ctx.lineWidth=PATHR+24;
-  ctx.lineCap='round'; ctx.lineJoin='round';
-  ctx.beginPath(); ctx.moveTo(PATH[0].x,PATH[0].y);
-  for(let i=1;i<PATH.length;i++)ctx.lineTo(PATH[i].x,PATH[i].y);
-  ctx.stroke(); ctx.shadowBlur=0;
-  // Dark road
-  ctx.strokeStyle='#060f1e'; ctx.lineWidth=PATHR;
-  ctx.beginPath(); ctx.moveTo(PATH[0].x,PATH[0].y);
-  for(let i=1;i<PATH.length;i++)ctx.lineTo(PATH[i].x,PATH[i].y);
-  ctx.stroke();
-  // Lane markings
-  ctx.strokeStyle='rgba(255,255,255,.04)'; ctx.lineWidth=1;
-  ctx.setLineDash([22,16]);
-  ctx.beginPath(); ctx.moveTo(PATH[0].x,PATH[0].y);
-  for(let i=1;i<PATH.length;i++)ctx.lineTo(PATH[i].x,PATH[i].y);
-  ctx.stroke(); ctx.setLineDash([]);
-  // Neon edge
-  ctx.shadowBlur=12; ctx.shadowColor='rgba(0,255,247,.5)';
-  ctx.strokeStyle='rgba(0,255,247,.25)'; ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(PATH[0].x,PATH[0].y);
-  for(let i=1;i<PATH.length;i++)ctx.lineTo(PATH[i].x,PATH[i].y);
-  ctx.stroke(); ctx.shadowBlur=0;
-
-  // Directional arrows along path
-  const totalLen=PL; const arrowSpacing=120;
-  const numArrows=Math.floor(totalLen/arrowSpacing);
-  ctx.fillStyle='rgba(0,255,247,.18)'; ctx.shadowBlur=0;
-  for(let ai=1;ai<=numArrows;ai++){
-    const d=ai*arrowSpacing;
-    const p=posAt(d);
-    const p2=posAt(Math.min(PL,d+10));
-    const ang=Math.atan2(p2.y-p.y,p2.x-p.x);
-    ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(ang);
-    ctx.beginPath(); ctx.moveTo(6,0); ctx.lineTo(-4,-4); ctx.lineTo(-4,4); ctx.closePath(); ctx.fill();
-    ctx.restore();
-  }
-
-  // START node
-  const s=PATH[0];
-  ctx.shadowBlur=25; ctx.shadowColor='#00fff7';
-  ctx.fillStyle='#00fff7'; ctx.beginPath(); ctx.arc(s.x,s.y,22,0,Math.PI*2); ctx.fill();
-  ctx.shadowBlur=0; ctx.fillStyle='#03070f';
-  ctx.font='bold 9px Orbitron'; ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText('START',s.x,s.y);
-
-  // DEPLOY node at end (where vehicles spawn) — small green marker
+  ensurePathCanvas(canvas.width,canvas.height);
+  ctx.drawImage(pathCanvas,0,0);
+  // Dynamic pulsing nodes only (these change every frame so can't be cached)
   const endPt=PATH[PATH.length-1];
   const dpulse=Math.sin(Date.now()*.005)*.5+.5;
   ctx.strokeStyle=`rgba(120,200,120,${.3+dpulse*.4})`; ctx.lineWidth=1.5;
   ctx.setLineDash([4,4]);
   ctx.beginPath(); ctx.arc(endPt.x,endPt.y,28+dpulse*5,0,Math.PI*2); ctx.stroke();
   ctx.setLineDash([]);
-
   // CORE node (pulsing)
-  const en=PATH[PATH.length-1];
   const pulse=Math.sin(Date.now()*.003)*.5+.5;
   ctx.strokeStyle=`rgba(255,0,122,${.18+pulse*.35})`; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.arc(en.x,en.y,30+pulse*8,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(endPt.x,endPt.y,30+pulse*8,0,Math.PI*2); ctx.stroke();
   ctx.shadowBlur=28; ctx.shadowColor='#ff007a';
-  ctx.fillStyle='#ff007a'; ctx.beginPath(); ctx.arc(en.x,en.y,24,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#ff007a'; ctx.beginPath(); ctx.arc(endPt.x,endPt.y,24,0,Math.PI*2); ctx.fill();
   ctx.shadowBlur=0; ctx.fillStyle='#fff';
-  ctx.font='bold 9px Orbitron';
-  ctx.fillText('CORE',en.x,en.y);
+  ctx.font='bold 9px Orbitron'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('CORE',endPt.x,endPt.y);
 }
 
 function drawEffects(){
@@ -2009,11 +2047,10 @@ function drawEffects(){
 function drawTrails(){
   for(const t of trails){
     const a=t.life/18;
-    ctx.globalAlpha=a*.45; ctx.fillStyle=t.color;
-    ctx.shadowBlur=6; ctx.shadowColor=t.color;
+    ctx.globalAlpha=a*.35; ctx.fillStyle=t.color;
     ctx.beginPath(); ctx.arc(t.x,t.y,t.size*a,0,Math.PI*2); ctx.fill();
   }
-  ctx.globalAlpha=1; ctx.shadowBlur=0;
+  ctx.globalAlpha=1;
 }
 
 // ── TOWER RENDERING (new models) ─────────────────────────
@@ -3751,17 +3788,17 @@ function mpApplyRemoteAction(data) {
   }
 
   if (type === 'place-tower') {
-    // Partner placed a tower — place it on our map and deduct cost from our wallet
     const def = TDEFS[payload.ttype];
     if (!def) return;
     const cost = payload.cost || towerCost(payload.ttype);
-    money -= cost; // deduct from shared wallet
+    money -= cost;
     const t = {
       x: payload.x, y: payload.y,
       type: payload.ttype,
+      name: def.name,
       color: def.color,
       dmg: def.dmg, rate: def.rate, range: def.range,
-      splash: def.splash, chain: def.chain,
+      splash: def.splash, ps: def.ps, chain: def.chain,
       upgDmg: 0, upgSpd: 0, upgRng: 0, upgSpec: 0,
       cooldown: 0, angle: -Math.PI/2, kills: 0, shootFlash: 0,
       totalSpent: cost, special: def.special,
@@ -3798,15 +3835,48 @@ function mpApplyRemoteAction(data) {
   }
 
   else if (type === 'enemy-sync') {
-    // P2 receives enemy state from P1 and replaces its local list
-    enemies = payload.enemies.map(d => ({
-      ...d,
-      freeze: d.frozen||0, freezeImmune: 0,
-      blinkCd: 0, shieldCd: 0, isSplit: false,
-    }));
-    // Sync lives too so P2 sees damage
-    if (payload.lives !== undefined) lives = payload.lives;
-    waveActive = payload.waveActive;
+    // Rebuild enemies from compact array format
+    if (payload.e) {
+      // Keep existing enemy objects and just update their positions/hp
+      // to avoid re-creating EDEFS lookups every frame
+      const incoming = payload.e;
+      // Resize array if needed
+      while (enemies.length > incoming.length) enemies.pop();
+      while (enemies.length < incoming.length) enemies.push({});
+      for (let i = 0; i < incoming.length; i++) {
+        const [x, y, hp, maxHp, type, dist, frozen, slowed, burn, shield, angle] = incoming[i];
+        const def = EDEFS[type] || {};
+        const e = enemies[i];
+        e.x=x; e.y=y; e.hp=hp; e.maxHp=maxHp; e.type=type; e.dist=dist;
+        e.frozen=frozen; e.slowed=slowed; e.burn=burn; e.shield=!!shield; e.angle=angle;
+        // Only set static fields if type changed
+        if (e._type !== type) {
+          e._type=type; e.color=def.color; e.glow=def.glow; e.size=def.size;
+          e.special=def.special; e.armor=def.armor; e.reward=def.reward; e.dmg=def.dmg;
+          e.speed=def.speed; e.freezeImmune=0; e.blinkCd=0; e.shieldCd=0; e.spinAngle=0;
+        }
+      }
+    }
+    if (payload.l !== undefined) { lives = payload.l; }
+    waveActive = !!payload.w;
+
+    // Sync tower angles and shoot flash from P1
+    if (payload.t && payload.t.length === towers.length) {
+      for (let i = 0; i < towers.length; i++) {
+        towers[i].angle = payload.t[i][0];
+        towers[i].shootFlash = payload.t[i][1];
+        towers[i].cooldown = payload.t[i][2];
+      }
+    }
+
+    // Sync projectiles from P1 for visual display
+    if (payload.p) {
+      projs = payload.p.map(([x, y, color, size]) => ({
+        x, y, color, size, tx: x, ty: y, speed: 0, target: null,
+        dmg: 0, splash: 0, chain: 0, chainHit: new Set(),
+      }));
+    }
+
     updateHUD();
   }
 
@@ -3846,6 +3916,21 @@ function mpApplyRemoteAction(data) {
     bump('pillCash');
     updateHUD();
   }
+
+  else if (type === 'buy-item') {
+    // Partner bought something — apply the effect locally without spending money again
+    const item = SHOP_ITEMS.find(x => x.id === payload.id);
+    if (!item || shopBought[payload.id]) { mpApplying = false; return; }
+    shopBought[payload.id] = true;
+    if (payload.id === 'dmg_boost') globalBonuses.dmgMult *= 1.2;
+    if (payload.id === 'rate_boost') globalBonuses.rateMult *= 1.15;
+    if (payload.id === 'range_boost') globalBonuses.rangeMult *= 1.1;
+    if (payload.id.startsWith('unlock_')) { TDEFS[payload.id.replace('unlock_','')].locked = false; buildTowerList(); }
+    if (payload.id === 'extra_lives') lives += 25;
+    showToast(item.icon, 'CO-OP SHOP', `Partner bought ${item.name}`, '#ffd700');
+    updateHUD(); updateAfford(); buildShopUI();
+  }
+
   mpApplying = false;
 }
 
@@ -3892,7 +3977,11 @@ buyItem = function(id) {
   const before = money;
   _origBuyItem(id);
   const spent = before - money;
-  if (spent > 0 && !mpApplying) mpSendAction('spend-money', { amount: spent });
+  if (spent > 0 && !mpApplying) {
+    mpSendAction('spend-money', { amount: spent });
+    // Also send the item id so partner gets the unlock/bonus too
+    mpSendAction('buy-item', { id });
+  }
 };
 
 // ── CHAT ─────────────────────────────────────────────────
