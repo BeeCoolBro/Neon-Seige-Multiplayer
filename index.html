@@ -1381,7 +1381,7 @@ function beginGame(){
   if(sandboxModeEnabled) setTimeout(()=>showToast('⚗','SANDBOX MODE','Custom waves enabled. Score disabled.','#ffd700'),1200);
   if(raf)cancelAnimationFrame(raf);
   // In co-op, P1 tells P2 to begin the game with the same settings
-  if (!mpSolo && mpPlayerNum === 1) {
+  if (!mpSolo && mpPlayerNum === 1 && !mpApplying) {
     mpSendAction('begin-game', { map: activeMap, diff: activeDiff, money, lives });
   }
   loop();
@@ -3682,8 +3682,10 @@ function mpSendAction(type, payload) {
 }
 
 // ── Apply an action received from the partner ──────────────
+let mpApplying = false; // prevents re-broadcasting when applying remote actions
 function mpApplyRemoteAction(data) {
   if (!data) return;
+  mpApplying = true;
   const { type, payload } = data;
 
   // Player 2 receives host's map + difficulty — apply and start
@@ -3827,58 +3829,53 @@ function mpApplyRemoteAction(data) {
     bump('pillCash');
     updateHUD();
   }
+  mpApplying = false;
 }
 
 
 // ── Hook into existing game functions ─────────────────────
-// Wrap placeTower to broadcast placement AND deduct cost from partner's wallet
 const _origPlaceTower = placeTower;
 placeTower = function(x, y, type) {
   const cost = towerCost(type);
   _origPlaceTower(x, y, type);
-  mpSendAction('place-tower', { x: Math.round(x), y: Math.round(y), ttype: type, cost });
+  if (!mpApplying) mpSendAction('place-tower', { x: Math.round(x), y: Math.round(y), ttype: type, cost });
 };
 
-// Wrap launchWave to sync wave starts
 const _origLaunchWave = launchWave;
 launchWave = function() {
   _origLaunchWave();
-  mpSendAction('launch-wave', {});
+  if (!mpApplying) mpSendAction('launch-wave', {});
 };
 
-// Wrap useAbility to sync abilities
 const _origUseAbility = useAbility;
 useAbility = function(idx) {
   _origUseAbility(idx);
-  mpSendAction('use-ability', { idx });
+  if (!mpApplying) mpSendAction('use-ability', { idx });
 };
 
-// Wrap doUpg to sync upgrade costs
 const _origDoUpg = doUpg;
 doUpg = function(stat) {
   const before = money;
   _origDoUpg(stat);
   const spent = before - money;
-  if (spent > 0) mpSendAction('spend-money', { amount: spent });
+  if (spent > 0 && !mpApplying) mpSendAction('spend-money', { amount: spent });
 };
 
-// Wrap sellSel to sync sell refunds
 const _origSellSel = sellSel;
 sellSel = function() {
   const before = money;
   const tower = selTower;
   _origSellSel();
   const gained = money - before;
-  if (tower) mpSendAction('sell-tower', { x: Math.round(tower.x), y: Math.round(tower.y), refund: gained });
+  if (tower && !mpApplying) mpSendAction('sell-tower', { x: Math.round(tower.x), y: Math.round(tower.y), refund: gained });
 };
 
-// Wrap buyItem to sync shop purchases
 const _origBuyItem = buyItem;
 buyItem = function(id) {
   const before = money;
   _origBuyItem(id);
   const spent = before - money;
-  if (spent > 0) mpSendAction('spend-money', { amount: spent });
+  if (spent > 0 && !mpApplying) mpSendAction('spend-money', { amount: spent });
 };
 
 // ── CHAT ─────────────────────────────────────────────────
